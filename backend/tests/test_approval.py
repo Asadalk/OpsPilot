@@ -123,7 +123,7 @@ def test_high_risk_action_pauses_then_approves_and_executes(database_path):
     assert retried.action_id == approved.action_id
 
     with get_connection(database_path) as connection:
-        action = connection.execute("SELECT status FROM actions WHERE action_id = %s", (approved.action_id,)).fetchone()
+        action = connection.execute("SELECT status, idempotency_key FROM actions WHERE action_id = %s", (approved.action_id,)).fetchone()
         run = connection.execute("SELECT status FROM agent_runs WHERE run_id = %s", (state.run_id,)).fetchone()
     assert action["status"] == "executed"
     assert run["status"] == "completed"

@@ -53,6 +53,7 @@ class ApprovalRepository:
                     "INSERT INTO approvals (run_id, action_id, expires_at, decision) VALUES (%s, %s, %s, %s) RETURNING *",
                     (run_id, action_id, expires_at, "pending"),
                 ).fetchone()
+                row["idempotency_key"] = action_idempotency_key(run_id, proposal)
                 append_audit_event(connection, actor=actor, event_type="action.proposed", entity_type="action",
                                    entity_id=action_id, run_id=run_id, reason=proposal.reason,
                                    result={"status": "approval_required"}, details=proposal.model_dump(mode="json"))

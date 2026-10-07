@@ -9,3 +9,5 @@ Each simulator action stores a unique idempotency key derived from its run, acti
 The agent applies bounded timeouts around Gemini decisions, knowledge retrieval, and deterministic tool calls. PostgreSQL connections and statements have explicit time limits. Only known transient faults are retried, once, with a short backoff. Tool failures and malformed results are passed back as structured failed evidence; the loop may use other tools before returning an uncertain or escalated run. Timed-out synchronous read tools run in worker threads and cannot be forcefully stopped, so database statement timeouts and read-only tool classification bound their remaining work.
 
 The simulator is the only action target. No production infrastructure is connected. The application uses one backend and one database; it does not use a separate audit service or distributed event bus.
+
+OpsBench v1 is a versioned JSON scenario set with deterministic setup controls for injected faults, roles, approval decisions, and verification outcomes. Its CLI validates definitions and confirms stable repeated loads without invoking a model or changing simulator state.
