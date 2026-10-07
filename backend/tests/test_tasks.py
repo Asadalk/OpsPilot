@@ -1,6 +1,7 @@
 from unittest.mock import patch
 
-from services.gemini import GeminiTimeout
+from app.api.routes import tasks as task_routes
+from app.services.gemini import GeminiTimeout
 
 
 def test_health(api):
@@ -11,7 +12,7 @@ def test_health(api):
 
 def test_extract_list_update_delete(api):
     item = {"task": "Prepare slides", "owner": "Lee", "deadline": "Thursday", "priority": "high"}
-    with patch("routes.tasks.gemini.extract_tasks", return_value=[item]):
+    with patch.object(task_routes.gemini, "extract_tasks", return_value=[item]):
         created = api("POST", "/extract", json={"text": "Lee prepares slides by Thursday"})
     assert created.status_code == 200
     task_id = created.json()[0]["id"]
@@ -25,14 +26,14 @@ def test_extract_list_update_delete(api):
 
 
 def test_invalid_model_task_is_not_persisted(api):
-    with patch("routes.tasks.gemini.extract_tasks", return_value=[{"task": "Bad priority", "priority": "urgent"}]):
+    with patch.object(task_routes.gemini, "extract_tasks", return_value=[{"task": "Bad priority", "priority": "urgent"}]):
         response = api("POST", "/extract", json={"text": "do thing"})
     assert response.status_code == 502
     assert api("GET", "/tasks").json() == []
 
 
 def test_gemini_timeout_is_returned_as_gateway_timeout(api):
-    with patch("routes.tasks.gemini.extract_tasks", side_effect=GeminiTimeout("Gemini request timed out")):
+    with patch.object(task_routes.gemini, "extract_tasks", side_effect=GeminiTimeout("Gemini request timed out")):
         response = api("POST", "/extract", json={"text": "Prepare a plan"})
     assert response.status_code == 504
     assert response.json()["detail"] == "Gemini request timed out"
