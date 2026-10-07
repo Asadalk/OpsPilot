@@ -46,11 +46,10 @@ Backend (from the repository root):
 ```bash
 cd backend
 python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+.venv/bin/python -m pip install -r requirements.txt
 cp .env.example .env
 # Set GEMINI_API_KEY in backend/.env
-uvicorn main:app --reload --host 127.0.0.1 --port 8000
+.venv/bin/python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 Frontend, in another terminal from the repository root:
@@ -80,8 +79,8 @@ Run backend tests offline (Gemini is mocked for deterministic failure-path tests
 
 ```bash
 cd backend
-python -m pip install -r requirements.txt
-python -m pytest -q
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m pytest -q
 ```
 
 The RAG tests cover production outage, security exposure, deployment verification, irrelevant queries, source attribution, and prompt context wiring. For real Gemini verification, set `GEMINI_API_KEY` in `backend/.env` and run the live API flow using the commands in this README.
