@@ -7,6 +7,7 @@ from app.api.routes.tasks import build_task_router
 from app.api.routes.simulator import build_simulator_router
 from app.api.routes.agent import build_agent_router
 from app.api.routes.auth import router as auth_router
+from app.api.routes.approvals import build_approval_router
 from app.agent.agent import build_agent
 from app.agent.provider import GeminiDecisionProvider
 from app.core.config import settings
@@ -51,3 +52,4 @@ app.include_router(build_task_router(task_service))
 app.include_router(build_simulator_router(simulator_service))
 app.include_router(build_agent_router(ops_agent))
 app.include_router(auth_router)
+app.include_router(build_approval_router(ops_agent.approval_service))

@@ -1,4 +1,5 @@
 import asyncio
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -64,7 +65,9 @@ def test_timeout_is_classified():
 
 
 def test_missing_key_fails_without_import_crash(monkeypatch):
-    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    from app.services import gemini
+
+    monkeypatch.setattr(gemini, "settings", replace(gemini.settings, gemini_api_key=""))
     with pytest.raises(GeminiError, match="GEMINI_API_KEY"):
         asyncio.run(extract_tasks("Do it"))
 

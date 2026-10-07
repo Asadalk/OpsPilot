@@ -5,9 +5,10 @@ from uuid import UUID
 from pydantic import BaseModel, Field
 
 from app.actions.schemas import ActionProposal
+from app.approval.schemas import ApprovalRecord
 from app.policy.engine import PolicyDecision
 
-AgentStatus = Literal["investigating", "completed", "failed"]
+AgentStatus = Literal["investigating", "paused", "completed", "failed"]
 DecisionAction = Literal["call_tool", "diagnose"]
 
 
@@ -51,6 +52,7 @@ class AgentState(BaseModel):
     diagnosis: str | None = None
     proposed_action: ActionProposal | None = None
     policy_decision: PolicyDecision | None = None
+    approval: ApprovalRecord | None = None
     status: AgentStatus = "investigating"
 
 

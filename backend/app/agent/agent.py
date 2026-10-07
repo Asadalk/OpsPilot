@@ -4,6 +4,8 @@ from uuid import uuid4
 
 from app.agent.provider import DecisionProvider
 from app.agent.schemas import AgentState, AgentToolCall, KnowledgeCitation
+from app.approval.repository import ApprovalRepository
+from app.approval.service import ApprovalService
 from app.auth.schemas import UserPrincipal
 from app.db.agent import AgentRepository, AgentRepositoryError
 from app.db.simulator import SimulatorRepository
@@ -14,13 +16,14 @@ from app.tools.registry import build_default_tools
 
 
 class OpsAgent:
-    def __init__(self, repository: AgentRepository, provider: DecisionProvider, tools: dict, knowledge_repository: KnowledgeRepository, simulator_repository: SimulatorRepository, policy_engine: PolicyEngine, max_steps: int = 8):
+    def __init__(self, repository: AgentRepository, provider: DecisionProvider, tools: dict, knowledge_repository: KnowledgeRepository, simulator_repository: SimulatorRepository, policy_engine: PolicyEngine, approval_service: ApprovalService, max_steps: int = 8):
         self.repository = repository
         self.provider = provider
         self.tools = tools
         self.knowledge_repository = knowledge_repository
         self.simulator_repository = simulator_repository
         self.policy_engine = policy_engine
+        self.approval_service = approval_service
         self.max_steps = max_steps
 
     async def investigate(self, user_request: str, principal: UserPrincipal | None = None) -> AgentState:
@@ -63,6 +66,12 @@ class OpsAgent:
                         state.proposed_action = decision.proposed_action.model_copy(
                             update={"risk_level": policy_decision.risk_level, "status": action_status}
                         )
+                        if policy_decision.outcome == "require_approval":
+                            state.approval = self.approval_service.repository.create_pending(state.run_id, state.proposed_action)
+                            state.proposed_action = state.proposed_action.model_copy(update={"status": "approval_required"})
+                            state.status = "paused"
+                            self._complete(state)
+                            return state
                     state.status = "completed"
                     self._complete(state)
                     return state
@@ -157,4 +166,6 @@ class OpsAgent:
 def build_agent(database_url: str, provider: DecisionProvider) -> OpsAgent:
     knowledge_repository = KnowledgeRepository(database_url)
     simulator_repository = SimulatorRepository(database_url)
-    return OpsAgent(AgentRepository(database_url), provider, build_default_tools(database_url), knowledge_repository, simulator_repository, PolicyEngine())
+    agent_repository = AgentRepository(database_url)
+    approval_service = ApprovalService(ApprovalRepository(database_url))
+    return OpsAgent(agent_repository, provider, build_default_tools(database_url), knowledge_repository, simulator_repository, PolicyEngine(), approval_service)

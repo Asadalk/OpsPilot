@@ -12,7 +12,7 @@ ActionType = Literal[
     "delete_data",
 ]
 RiskLevel = Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
-ActionStatus = Literal["proposed", "allowed", "denied", "approval_required"]
+ActionStatus = Literal["proposed", "allowed", "denied", "approval_required", "executed"]
 
 
 class ActionProposal(BaseModel):
