@@ -10,13 +10,14 @@ BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
 from app.db.database import get_connection, init_db
-from app.main import app, task_service
+from app.main import app, simulator_service, task_service
 
 
 @pytest.fixture
 def api(tmp_path, monkeypatch):
     database_url = os.getenv("TEST_DATABASE_URL", "postgresql://opspilot:opspilot@localhost:5433/opspilot")
     monkeypatch.setattr(task_service.repository, "database_url", database_url)
+    monkeypatch.setattr(simulator_service.repository, "database_url", database_url)
     init_db(database_url)
     with get_connection(database_url) as connection:
         connection.execute("TRUNCATE tasks RESTART IDENTITY")

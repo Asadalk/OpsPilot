@@ -5,6 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 Priority = Literal["high", "medium", "low"]
 TaskStatus = Literal["todo", "in_progress", "done"]
+ServiceState = Literal["healthy", "degraded", "failed"]
 
 
 class ExtractRequest(BaseModel):
@@ -66,6 +67,52 @@ class TaskCreate(BaseModel):
     owner: str = "Unknown"
     deadline: str = "Not specified"
     priority: Priority = "medium"
+
+
+class ServiceHealth(BaseModel):
+    service_id: int
+    name: str
+    environment: str
+    repository: str
+    state: ServiceState
+
+
+class ServiceMetric(BaseModel):
+    id: int
+    timestamp: datetime
+    service: str
+    metric_name: str
+    value: float
+
+
+class ServiceLog(BaseModel):
+    id: int
+    timestamp: datetime
+    service: str
+    level: Literal["debug", "info", "warn", "error"]
+    message: str
+    trace_id: str
+
+
+class ServiceDeployment(BaseModel):
+    deployment_id: int
+    service_id: int
+    service: str
+    version: str
+    deployed_at: datetime
+    author: str
+    status: Literal["success", "failed", "rolled_back"]
+
+
+class ServiceIncident(BaseModel):
+    id: int
+    title: str
+    severity: Literal["sev1", "sev2", "sev3", "sev4"]
+    status: Literal["open", "investigating", "resolved"]
+    service_id: int
+    service: str
+    created_at: datetime
+    updated_at: datetime
 
 
 def normalize_task(item: dict[str, object]) -> TaskCreate:

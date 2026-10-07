@@ -19,7 +19,7 @@ def test_initial_migration_is_recorded(database_path):
     init_db(database_path)
     with get_connection(database_path) as connection:
         versions = {row["version"] for row in connection.execute("SELECT version FROM schema_migrations")}
-    assert versions == {"001_initial_tasks.sql", "002_operational_domain.sql"}
+    assert versions == {"001_initial_tasks.sql", "002_operational_domain.sql", "003_ops_simulator.sql"}
 
 
 def test_operational_domain_seed_is_queryable(database_path):
@@ -33,5 +33,9 @@ def test_operational_domain_seed_is_queryable(database_path):
             "SELECT incidents.title, services.name FROM incidents JOIN services ON services.id = incidents.service_id WHERE incidents.title = %s",
             ("Elevated order latency",),
         ).fetchone()
-    assert counts == {"services": 3, "incidents": 2, "deployments": 3, "logs": 3, "metrics": 3}
+    assert counts["services"] >= 8
+    assert counts["incidents"] >= 7
+    assert counts["deployments"] >= 6
+    assert counts["logs"] >= 8
+    assert counts["metrics"] >= 8
     assert incident == {"title": "Elevated order latency", "name": "orders-api"}

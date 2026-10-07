@@ -26,6 +26,8 @@ backend/app/main.py (FastAPI application)
             owns environment-backed settings
 
 PostgreSQL currently contains the original `tasks` table plus the operational domain tables created by `002_operational_domain.sql`: `services`, `incidents`, `deployments`, `logs`, and `metrics`. Incidents, deployments, logs, and metrics reference `services.id` with foreign keys. Seed rows make the domain queryable immediately after an empty database is migrated.
+
+The deterministic simulator data is created by `003_ops_simulator.sql`. The read-only simulator routes use `app/db/simulator.py` and `app/services/simulator.py`; they query PostgreSQL directly through the repository boundary and never call Gemini.
 ```
 
 `backend/main.py`, `backend/models.py`, `backend/database.py`, and the old service and route paths are compatibility shims. The container starts `app.main:app` directly.

@@ -4,12 +4,16 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.tasks import build_task_router
+from app.api.routes.simulator import build_simulator_router
 from app.core.config import settings
 from app.db.database import init_db
 from app.db.repositories import TaskRepository
+from app.db.simulator import SimulatorRepository
+from app.services.simulator import SimulatorService
 from app.services.tasks import TaskService
 
 task_service = TaskService(TaskRepository(settings.database_url))
+simulator_service = SimulatorService(SimulatorRepository(settings.database_url))
 
 
 @asynccontextmanager
@@ -39,3 +43,4 @@ async def read_root() -> dict[str, str]:
 
 
 app.include_router(build_task_router(task_service))
+app.include_router(build_simulator_router(simulator_service))
