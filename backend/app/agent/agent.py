@@ -1,18 +1,24 @@
+import asyncio
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
 
-from app.agent.provider import DecisionProvider
-from app.agent.schemas import AgentState, AgentToolCall, KnowledgeCitation
+from app.agent.provider import DecisionProvider, MalformedDecisionError
+from app.agent.schemas import AgentFailure, AgentState, AgentToolCall, KnowledgeCitation
 from app.approval.repository import ApprovalRepository
 from app.approval.service import ApprovalService
 from app.auth.schemas import UserPrincipal
+from app.core.config import settings
 from app.db.agent import AgentRepository, AgentRepositoryError
 from app.db.simulator import SimulatorRepository
 from app.policy.engine import PolicyEngine
 from app.rag.repository import KnowledgeRepository
-from app.tools.base import ToolError
+from app.reliability import backoff, error_category, is_transient_error
+from app.tools.base import ToolResultError
 from app.tools.registry import build_default_tools
+
+
+MAX_TRANSIENT_ATTEMPTS = 2
 
 
 class OpsAgent:
@@ -25,16 +31,22 @@ class OpsAgent:
         self.policy_engine = policy_engine
         self.approval_service = approval_service
         self.max_steps = max_steps
+        self.tool_timeout_seconds = settings.tool_timeout_seconds
+        self.retrieval_timeout_seconds = settings.retrieval_timeout_seconds
+        self.llm_timeout_seconds = settings.gemini_timeout_seconds
 
     async def investigate(self, user_request: str, principal: UserPrincipal | None = None) -> AgentState:
         principal = principal or UserPrincipal(username="internal-test", role="admin")
         state = AgentState(run_id=uuid4(), user_request=user_request)
-        self.repository.create_run(state.run_id, user_request, principal.username)
-        state.knowledge = [
-            KnowledgeCitation.model_validate(citation)
-            for citation in self.knowledge_repository.search(user_request, top_k=3)
-        ]
-        state.evidence.append({"knowledge": [citation.model_dump(mode="json") for citation in state.knowledge]})
+        try:
+            self.repository.create_run(state.run_id, user_request, principal.username)
+        except Exception as exc:
+            self._failure(state, self._database_category(exc), "The run could not be stored because the database is unavailable.")
+            state.status = "failed"
+            state.diagnosis = "Investigation could not start; database persistence failed. Escalate and retry after database recovery."
+            return state
+
+        await self._retrieve_knowledge(state, user_request)
         descriptions = [
             {
                 "name": tool.name,
@@ -46,15 +58,48 @@ class OpsAgent:
         ]
         try:
             for _ in range(self.max_steps):
-                decision = await self.provider.decide(state, descriptions)
+                decision = await self._decide(state, descriptions)
+                if decision is None:
+                    state.status = "failed"
+                    category = state.failure_states[-1].category
+                    state.diagnosis = self._failure_diagnosis(category)
+                    self._complete_safely(state, principal.username)
+                    return state
                 state.service = decision.service or state.service
                 state.severity = decision.severity or state.severity
                 if decision.hypotheses:
                     state.hypotheses = decision.hypotheses
                     state.hypothesis_history.append(decision.hypotheses)
                 if decision.action == "diagnose":
-                    state.diagnosis = self._cite_knowledge(decision.diagnosis, state)
-                    if decision.proposed_action:
+                    if not decision.diagnosis or not decision.diagnosis.strip():
+                        self._failure(state, "malformed_model_response", "The model returned a diagnosis action without a diagnosis.")
+                        state.status = "failed"
+                        state.escalation_required = True
+                        state.diagnosis = "The model did not provide a diagnosis. No successful conclusion was recorded; escalate for review."
+                        self._complete_safely(state, principal.username)
+                        return state
+                    diagnosis = self._cite_knowledge(decision.diagnosis, state)
+                    unresolved_tool_failure = any(
+                        not failure.resolved and failure.category in {
+                            "tool_timeout", "tool_failure", "malformed_tool_result", "temporary_database_error"
+                        }
+                        for failure in state.failure_states
+                    )
+                    returned_empty_records = any("returned empty records" in warning for warning in state.warnings)
+                    has_independent_observation = any(
+                        call.success and call.result and not self._contains_empty_collection(call.result)
+                        for call in state.tool_calls
+                    )
+                    missing_operational_data = returned_empty_records and not has_independent_observation
+                    retrieval_unavailable = any(
+                        not failure.resolved and failure.category in {
+                            "retrieval_failure", "retrieval_timeout", "temporary_database_error"
+                        }
+                        for failure in state.failure_states
+                    )
+                    state.escalation_required = unresolved_tool_failure or missing_operational_data or retrieval_unavailable
+                    unsafe_evidence = unresolved_tool_failure or missing_operational_data or retrieval_unavailable
+                    if decision.proposed_action and not unsafe_evidence:
                         environment = self._resolve_environment(decision.proposed_action.target, state.service)
                         policy_decision = self.policy_engine.evaluate(decision.proposed_action, principal, environment)
                         state.policy_decision = policy_decision
@@ -71,83 +116,235 @@ class OpsAgent:
                                 state.run_id, state.proposed_action, principal.username,
                                 policy_decision.model_dump(mode="json"),
                             )
-                            state.proposed_action = state.proposed_action.model_copy(update={"status": "approval_required"})
+                            state.diagnosis = self._with_uncertainty(diagnosis, state)
                             state.status = "paused"
-                            self._complete(state, principal.username, audit_action=False)
+                            self._complete_safely(state, principal.username, audit_action=False)
                             return state
-                    state.status = "completed"
-                    self._complete(state, principal.username)
+                    elif decision.proposed_action and unsafe_evidence:
+                        state.warnings.append("An action proposal was withheld because required tool evidence is incomplete.")
+                    state.diagnosis = self._with_uncertainty(diagnosis, state)
+                    state.status = "failed" if state.escalation_required else "completed"
+                    self._complete_safely(state, principal.username)
                     return state
-                if not decision.tool_name or decision.tool_name not in self.tools:
-                    raise ValueError(f"Unknown tool requested: {decision.tool_name}")
-                state.service = decision.arguments.get("service", state.service)
-                self._execute_tool(state, decision.tool_name, decision.arguments, principal.username)
-            state.status = "failed"
-            state.diagnosis = "Investigation exceeded the maximum tool-step limit."
-            self._complete(state, principal.username)
-            return state
-        except Exception:
-            state.status = "failed"
-            self._complete(state, principal.username)
-            raise
 
-    def _execute_tool(self, state: AgentState, tool_name: str, arguments: dict[str, Any], actor: str = "system") -> None:
-        start_time = datetime.now(timezone.utc)
-        result: dict[str, Any] | None = None
-        error: str | None = None
-        success = False
-        try:
-            result_model = self.tools[tool_name].run(arguments)
-            result = result_model.model_dump(mode="json")
+                if not decision.tool_name or decision.tool_name not in self.tools:
+                    self._failure(state, "malformed_model_response", "The model selected an unknown tool; no tool was run.")
+                    state.status = "failed"
+                    state.diagnosis = "Investigation stopped because the model returned an invalid tool selection. Escalate for review."
+                    self._complete_safely(state, principal.username)
+                    return state
+                state.service = decision.arguments.get("service", state.service)
+                persisted = await self._execute_tool(state, decision.tool_name, decision.arguments, principal.username)
+                if not persisted:
+                    state.status = "failed"
+                    state.diagnosis = "Investigation stopped because the database could not persist tool evidence. Escalate; the recorded evidence may be incomplete."
+                    self._complete_safely(state, principal.username)
+                    return state
+
+            state.status = "failed"
+            self._failure(state, "step_limit", "The investigation reached its configured tool-step limit.")
+            state.diagnosis = "Investigation reached its step limit without a supported conclusion. Escalate for human investigation."
+            self._complete_safely(state, principal.username)
+            return state
+        except Exception as exc:
+            self._failure(state, self._database_category(exc) if isinstance(exc, AgentRepositoryError) else "agent_failure",
+                          "An internal investigation step failed; no successful conclusion was recorded.")
+            state.status = "failed"
+            state.diagnosis = "Investigation stopped after an internal failure. The result is uncertain and requires escalation."
+            self._complete_safely(state, principal.username)
+            return state
+
+    async def _retrieve_knowledge(self, state: AgentState, query: str) -> None:
+        last_error: Exception | None = None
+        for attempt in range(1, MAX_TRANSIENT_ATTEMPTS + 1):
+            try:
+                rows = await asyncio.wait_for(
+                    asyncio.to_thread(self.knowledge_repository.search, query, top_k=3),
+                    timeout=self.retrieval_timeout_seconds,
+                )
+                state.knowledge = [KnowledgeCitation.model_validate(row) for row in rows]
+                if attempt > 1:
+                    self._failure(state, "temporary_database_error", "Knowledge retrieval recovered after a transient failure.",
+                                  retryable=True, attempts=attempt, resolved=True)
+                if state.knowledge:
+                    state.retrieval_status = "ok"
+                else:
+                    state.retrieval_status = "empty"
+                    self._failure(state, "retrieval_empty",
+                                  "No knowledge chunks were returned; this does not mean relevant knowledge does not exist.")
+                    state.warnings.append("Knowledge retrieval returned no matches; absence of retrieved knowledge is not evidence that relevant guidance does not exist.")
+                state.evidence.append({"knowledge": [citation.model_dump(mode="json") for citation in state.knowledge],
+                                       "retrieval_status": state.retrieval_status})
+                return
+            except Exception as exc:
+                last_error = exc
+                retryable = is_transient_error(exc)
+                if retryable and attempt < MAX_TRANSIENT_ATTEMPTS:
+                    await backoff(attempt)
+                    continue
+                break
+        state.retrieval_status = "failed"
+        category = error_category(last_error or RuntimeError(), operation="retrieval")
+        self._failure(state, category,
+                      "Knowledge retrieval failed; the investigation will continue without assuming that no guidance exists.",
+                      retryable=is_transient_error(last_error) if last_error else False,
+                      attempts=attempt)
+        state.warnings.append("Knowledge retrieval failed; relevant guidance may exist and was not available to this run.")
+        state.evidence.append({"retrieval_status": "failed", "error": category})
+
+    async def _decide(self, state: AgentState, descriptions: list[dict[str, Any]]):
+        last_error: Exception | None = None
+        for attempt in range(1, MAX_TRANSIENT_ATTEMPTS + 1):
+            try:
+                decision = await asyncio.wait_for(
+                    self.provider.decide(state, descriptions), timeout=self.llm_timeout_seconds
+                )
+                if attempt > 1:
+                    self._failure(state, error_category(last_error or TimeoutError(), operation="llm"),
+                                  "The model call recovered after a transient failure.", retryable=True,
+                                  attempts=attempt, resolved=True)
+                return decision
+            except Exception as exc:
+                last_error = exc
+                retryable = is_transient_error(exc)
+                if retryable and attempt < MAX_TRANSIENT_ATTEMPTS:
+                    await backoff(attempt)
+                    continue
+                break
+        category = "malformed_model_response" if isinstance(last_error, MalformedDecisionError) else error_category(last_error or RuntimeError(), operation="llm")
+        self._failure(state, category,
+                      "The model could not provide a valid decision; no diagnosis or action was inferred.",
+                      retryable=is_transient_error(last_error) if last_error else False,
+                      attempts=attempt)
+        return None
+
+    async def _execute_tool(self, state: AgentState, tool_name: str, arguments: dict[str, Any], actor: str) -> bool:
+        tool = self.tools[tool_name]
+        last_failure: AgentFailure | None = None
+        for attempt in range(1, MAX_TRANSIENT_ATTEMPTS + 1):
+            start_time = datetime.now(timezone.utc)
+            try:
+                result_model = await asyncio.wait_for(
+                    asyncio.to_thread(tool.run, arguments), timeout=self.tool_timeout_seconds
+                )
+                result = result_model.model_dump(mode="json")
+            except Exception as exc:
+                category = "malformed_tool_result" if isinstance(exc, ToolResultError) else error_category(exc, operation="tool")
+                retryable = is_transient_error(exc)
+                failure_result = {"status": "error", "category": category,
+                                  "message": "Tool timed out." if category == "tool_timeout" else "Tool returned no usable observation."}
+                event = AgentToolCall(
+                    call_index=len(state.tool_calls), tool=tool_name, arguments=arguments,
+                    start_time=start_time, end_time=datetime.now(timezone.utc), result=failure_result,
+                    success=False, error=failure_result["message"],
+                )
+                state.tool_calls.append(event)
+                state.tool_results.append({"tool": tool_name, "result": failure_result})
+                state.evidence.append({"tool_failure": {"tool": tool_name, **failure_result}})
+                last_failure = AgentFailure(category=category, message=failure_result["message"],
+                                            retryable=retryable, attempts=attempt)
+                state.failure_states.append(last_failure)
+                if not self._persist_tool_event(state, event, actor):
+                    return False
+                if retryable and attempt < MAX_TRANSIENT_ATTEMPTS:
+                    await backoff(attempt)
+                    continue
+                state.warnings.append(f"Tool {tool_name} failed; the missing observation is not evidence of health.")
+                return True
+
+            event = AgentToolCall(
+                call_index=len(state.tool_calls), tool=tool_name, arguments=arguments,
+                start_time=start_time, end_time=datetime.now(timezone.utc), result=result,
+                success=True,
+            )
+            state.tool_calls.append(event)
             state.tool_results.append({"tool": tool_name, "result": result})
             state.evidence.append({"tool": tool_name, "result": result})
-            success = True
-        except ToolError as exc:
-            error = str(exc)
-        end_time = datetime.now(timezone.utc)
-        event = AgentToolCall(
-            call_index=len(state.tool_calls),
-            tool=tool_name,
-            arguments=arguments,
-            start_time=start_time,
-            end_time=end_time,
-            result=result,
-            success=success,
-            error=error,
-        )
-        state.tool_calls.append(event)
-        self.repository.record_tool_call(
-            state.run_id,
-            event.call_index,
-            event.tool,
-            event.arguments,
-            event.start_time,
-            event.end_time,
-            event.result,
-            event.success,
-            event.error,
-            actor,
-        )
-        if not success:
-            raise ToolError(error or "Tool failed")
+            if last_failure:
+                last_failure.resolved = True
+                last_failure.message = "A transient tool failure recovered on retry."
+                state.evidence.append({"failure_resolution": {
+                    "category": last_failure.category, "resolved": True,
+                    "message": last_failure.message, "attempts": attempt,
+                }})
+            if self._contains_empty_collection(result):
+                warning = f"Tool {tool_name} returned empty records; no matching data does not establish healthy state."
+                state.warnings.append(warning)
+                state.evidence.append({"evidence_warning": warning})
+            return self._persist_tool_event(state, event, actor)
+        return True
 
-    def _complete(self, state: AgentState, actor: str = "system", audit_action: bool = True) -> None:
-        self.repository.complete_run(
-            state.run_id,
-            state.service,
-            state.severity,
-            state.evidence,
-            [hypothesis.model_dump(mode="json") for hypothesis in state.hypotheses],
-            [[hypothesis.model_dump(mode="json") for hypothesis in hypotheses] for hypotheses in state.hypothesis_history],
-            [citation.model_dump(mode="json") for citation in state.knowledge],
-            state.proposed_action.model_dump(mode="json") if state.proposed_action else None,
-            state.policy_decision.model_dump(mode="json") if state.policy_decision else None,
-            state.diagnosis,
-            state.proposed_action,
-            state.status,
-            actor,
-            audit_action,
+    def _persist_tool_event(self, state: AgentState, event: AgentToolCall, actor: str) -> bool:
+        try:
+            self.repository.record_tool_call(
+                state.run_id, event.call_index, event.tool, event.arguments,
+                event.start_time, event.end_time, event.result, event.success, event.error, actor,
+            )
+            return True
+        except Exception as exc:
+            self._failure(state, self._database_category(exc),
+                          "Tool evidence could not be persisted; investigation stopped.")
+            return False
+
+    def _complete_safely(self, state: AgentState, actor: str, audit_action: bool = True) -> None:
+        try:
+            self.repository.complete_run(
+                state.run_id, state.service, state.severity, state.evidence,
+                [hypothesis.model_dump(mode="json") for hypothesis in state.hypotheses],
+                [[hypothesis.model_dump(mode="json") for hypothesis in group] for group in state.hypothesis_history],
+                [citation.model_dump(mode="json") for citation in state.knowledge],
+                state.proposed_action.model_dump(mode="json") if state.proposed_action else None,
+                state.policy_decision.model_dump(mode="json") if state.policy_decision else None,
+                state.diagnosis, state.proposed_action, state.status, actor, audit_action,
+            )
+        except Exception as exc:
+            state.status = "failed"
+            self._failure(state, self._database_category(exc),
+                          "The final run state could not be persisted; the response may not match durable state.")
+            state.diagnosis = "Investigation result could not be safely recorded. Treat it as uncertain and escalate."
+
+    @staticmethod
+    def _failure(state: AgentState, category: str, message: str, *, retryable: bool = False,
+                 attempts: int = 1, resolved: bool = False) -> AgentFailure:
+        failure = AgentFailure(category=category, message=message, retryable=retryable,
+                               attempts=attempts, resolved=resolved)
+        state.failure_states.append(failure)
+        state.evidence.append({"failure": failure.model_dump(mode="json")})
+        return failure
+
+    @staticmethod
+    def _database_category(error: BaseException) -> str:
+        category = error_category(error, operation="database")
+        return category if category == "temporary_database_error" else "database_failure"
+
+    @staticmethod
+    def _failure_diagnosis(category: str) -> str:
+        if category == "llm_timeout":
+            return "The decision model timed out after a bounded retry. No diagnosis was produced; escalate or retry later."
+        if category == "malformed_model_response":
+            return "The decision model returned malformed data. No diagnosis was produced; escalate for review."
+        return "The decision model failed after a bounded attempt. No diagnosis was produced; escalate for review."
+
+    @staticmethod
+    def _with_uncertainty(diagnosis: str | None, state: AgentState) -> str:
+        unresolved = [failure for failure in state.failure_states if not failure.resolved]
+        if not unresolved and not state.warnings:
+            return diagnosis or "No diagnosis was returned; the incident remains uncertain."
+        reasons = list(dict.fromkeys([failure.category for failure in unresolved] + state.warnings))
+        text = diagnosis or "Available evidence does not support a definitive diagnosis."
+        return (
+            f"Unverified model output: {text}\n\n"
+            f"Uncertainty: {'; '.join(reasons)} Missing or unavailable evidence is not evidence of healthy state."
         )
+
+    @staticmethod
+    def _contains_empty_collection(value: Any) -> bool:
+        if isinstance(value, dict):
+            return any((isinstance(item, list) and not item) or OpsAgent._contains_empty_collection(item)
+                       for item in value.values())
+        if isinstance(value, list):
+            return any(OpsAgent._contains_empty_collection(item) for item in value)
+        return False
 
     @staticmethod
     def _cite_knowledge(diagnosis: str | None, state: AgentState) -> str | None:
@@ -174,4 +371,5 @@ def build_agent(database_url: str, provider: DecisionProvider) -> OpsAgent:
     simulator_repository = SimulatorRepository(database_url)
     agent_repository = AgentRepository(database_url)
     approval_service = ApprovalService(ApprovalRepository(database_url))
-    return OpsAgent(agent_repository, provider, build_default_tools(database_url), knowledge_repository, simulator_repository, PolicyEngine(), approval_service)
+    return OpsAgent(agent_repository, provider, build_default_tools(database_url), knowledge_repository,
+                    simulator_repository, PolicyEngine(), approval_service)

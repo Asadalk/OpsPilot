@@ -12,6 +12,14 @@ AgentStatus = Literal["investigating", "paused", "completed", "failed"]
 DecisionAction = Literal["call_tool", "diagnose"]
 
 
+class AgentFailure(BaseModel):
+    category: str
+    message: str
+    retryable: bool = False
+    attempts: int = 1
+    resolved: bool = False
+
+
 class AgentToolCall(BaseModel):
     call_index: int
     tool: str
@@ -54,6 +62,10 @@ class AgentState(BaseModel):
     policy_decision: PolicyDecision | None = None
     approval: ApprovalRecord | None = None
     status: AgentStatus = "investigating"
+    retrieval_status: Literal["not_started", "ok", "empty", "failed"] = "not_started"
+    failure_states: list[AgentFailure] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    escalation_required: bool = False
 
 
 class AgentDecision(BaseModel):

@@ -23,4 +23,7 @@ def test_token_issuance_and_protected_agent_route(api):
         headers={"Authorization": f"Bearer {token}"},
         json={"request": "investigate payments"},
     )
-    assert protected.status_code == 500
+    assert protected.status_code == 200
+    assert protected.json()["status"] == "failed"
+    assert protected.json()["failure_states"]
+    assert "No diagnosis was produced" in protected.json()["diagnosis"]

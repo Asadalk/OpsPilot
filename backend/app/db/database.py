@@ -9,7 +9,12 @@ MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "migrations"
 
 
 def get_connection(database_url: str = settings.database_url) -> psycopg.Connection:
-    return psycopg.connect(database_url, row_factory=dict_row)
+    return psycopg.connect(
+        database_url,
+        row_factory=dict_row,
+        connect_timeout=settings.database_connect_timeout_seconds,
+        options=f"-c statement_timeout={settings.database_statement_timeout_ms}",
+    )
 
 
 def init_db(database_url: str = settings.database_url) -> None:

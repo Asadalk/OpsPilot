@@ -4,6 +4,7 @@ from typing import Any
 
 from app.core.config import settings
 from app.models.schemas import ExtractedTask
+from app.reliability import backoff, is_transient_error
 from app.services.rag import GuidelineChunk, build_context
 
 DEFAULT_MODEL = "gemini-2.5-flash"
@@ -93,6 +94,9 @@ async def extract_tasks(
                 if "api key" in error_text and ("400" in error_text or "invalid" in error_text):
                     raise GeminiError("Gemini API key is invalid. Update GEMINI_API_KEY in backend/.env.") from exc
                 api_error = exc
+                if is_transient_error(exc) and attempt == 0:
+                    await backoff(attempt + 1)
+                    continue
                 break
             try:
                 return _parse_tasks(response.text or "")

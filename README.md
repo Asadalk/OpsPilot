@@ -40,7 +40,7 @@ The operations simulator adds deterministic services including `payments-api`, `
 
 The deterministic Python tools in `backend/app/tools` expose the same evidence without FastAPI or Gemini. They validate typed inputs, bound result sizes, and return structured Pydantic results. Runbook search is intentionally an explicit placeholder until the later retrieval phase.
 
-The first Ops Agent is investigation-only. `POST /agent/investigate` runs a bounded direct loop in which Gemini selects only registered read-only tools, observes their results, and returns a diagnosis. Each run and tool call is recorded in PostgreSQL; no action execution tool is available.
+`POST /agent/investigate` runs a bounded direct loop in which Gemini selects only registered read-only investigation tools, observes their results, and returns a diagnosis and possible proposal. Actual write actions remain outside this loop and run only through the approval service against the simulator. Each run and tool call is recorded in PostgreSQL.
 
 Operational knowledge is stored under `knowledge/` and ingested with `PYTHONPATH=backend backend/.venv/bin/python -m app.rag.ingest --knowledge-dir knowledge`. PostgreSQL + pgvector stores the cleaned chunks and 128-dimensional embeddings. Retrieval returns provenance and is included as cited supporting context in agent diagnoses.
 
@@ -53,6 +53,8 @@ Action types are separated into `READ` and `WRITE` tools. Write-capable operatio
 Authentication uses JWT bearer tokens from `POST /auth/token`. Roles are `viewer`, `operator`, and `admin`. Policy is evaluated by the backend after the agent proposes an action: viewers cannot restart services, operators require approval for high-risk actions, and admins are allowed according to the configured policy rules. The LLM cannot override the server-derived risk or policy outcome.
 
 The append-only audit trail records login results, incident and run activity, tool calls, policy decisions, proposals, approval decisions, simulated execution, verification, and resolution. Authenticated users can retrieve a complete incident timeline with `GET /audit/incidents/{incident_id}`. Audit rows are protected from update, delete, and truncate by database triggers.
+
+Agent dependencies have bounded timeouts for Gemini, retrieval, tools, and PostgreSQL connections/statements. Recognized transient timeouts, connection failures, deadlocks, serialization conflicts, and provider throttling/server errors receive at most one retry with a short backoff. Permanent tool failures become structured failed observations; incomplete evidence is surfaced as uncertainty, with actions withheld and escalation marked when required. Empty retrieval is reported as unavailable context, not proof that no relevant guidance exists.
 
 See [the architecture overview](docs/architecture.md), [phase log](docs/PHASE-LOG.md), [build gates](docs/BUILD-GATES.md), and [Phase 15 interview notes](docs/interview-defense/phase-15.md) for implementation and verification details.
 

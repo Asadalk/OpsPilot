@@ -20,6 +20,10 @@ class ToolExecutionError(ToolError):
     pass
 
 
+class ToolResultError(ToolError):
+    """A tool returned a value that violates its declared output schema."""
+
+
 class Tool(Generic[InputModel, ResultModel], ABC):
     name: str
     description: str
@@ -34,7 +38,10 @@ class Tool(Generic[InputModel, ResultModel], ABC):
             raise ToolInputError(str(exc)) from exc
         try:
             result = self.execute(parameters)
-            return self.result_schema.model_validate(result)
+            try:
+                return self.result_schema.model_validate(result)
+            except ValidationError as exc:
+                raise ToolResultError(f"{self.name} returned malformed structured data") from exc
         except ToolError:
             raise
         except Exception as exc:

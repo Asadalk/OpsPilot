@@ -59,9 +59,10 @@ def test_api_failure_tries_fallback_models_then_fails():
 
 
 def test_timeout_is_classified():
-    client = FakeClient([TimeoutError("request timeout"), TimeoutError("request timeout"), TimeoutError("request timeout")])
+    client = FakeClient([TimeoutError("request timeout")] * 6)
     with pytest.raises(GeminiTimeout, match="timed out"):
         asyncio.run(extract_tasks("Do it", client))
+    assert client.aio.models.generate_content.call_count == 6
 
 
 def test_missing_key_fails_without_import_crash(monkeypatch):

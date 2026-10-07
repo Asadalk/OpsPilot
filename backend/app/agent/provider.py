@@ -1,6 +1,8 @@
 import json
 from typing import Any, Protocol
 
+from pydantic import ValidationError
+
 from app.agent.schemas import AgentDecision, AgentState
 from app.core.config import settings
 
@@ -8,6 +10,10 @@ from app.core.config import settings
 class DecisionProvider(Protocol):
     async def decide(self, state: AgentState, tool_descriptions: list[dict[str, Any]]) -> AgentDecision:
         ...
+
+
+class MalformedDecisionError(Exception):
+    """The model returned a decision that doesn't match the agent contract."""
 
 
 class GeminiDecisionProvider:
@@ -68,6 +74,7 @@ class GeminiDecisionProvider:
             "Do not provide chain-of-thought; return only the structured decision.\n\n"
             f"USER REQUEST:\n{state.user_request}\n\n"
             f"OBSERVED EVIDENCE:\n{json.dumps(state.evidence, default=str)}\n\n"
+            f"RETRIEVAL STATUS: {state.retrieval_status}. WARNINGS: {json.dumps(state.warnings)}\n\n"
             f"RETRIEVED KNOWLEDGE:\n{json.dumps([item.model_dump(mode='json') for item in state.knowledge])}\n\n"
             f"AVAILABLE TOOLS:\n{json.dumps(tool_descriptions)}\n\n"
             "Use arguments matching the selected tool schema. A diagnose decision must include diagnosis and "
@@ -76,10 +83,16 @@ class GeminiDecisionProvider:
             "Scores are model-assigned hypothesis scores, not calibrated probabilities. Keep competing hypotheses "
             "when evidence is ambiguous and gather another tool result before diagnosing. Any action must be "
             "returned as a proposed action with status proposed; never execute it."
+            " A failed tool is a failed observation, never evidence of success. Empty metrics, logs, incidents, "
+            "or retrieved knowledge do not establish healthy state or absence of relevant knowledge. "
+            "When a tool fails, use another relevant tool if possible or return explicit uncertainty."
         )
         response = await client.aio.models.generate_content(
             model=self.model,
             contents=prompt,
             config={"response_mime_type": "application/json", "response_schema": self.response_schema},
         )
-        return AgentDecision.model_validate(json.loads(response.text or "{}"))
+        try:
+            return AgentDecision.model_validate(json.loads(response.text or "{}"))
+        except (json.JSONDecodeError, ValidationError, TypeError) as exc:
+            raise MalformedDecisionError("Gemini returned a malformed agent decision") from exc
