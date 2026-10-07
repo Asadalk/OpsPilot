@@ -4,7 +4,7 @@ from uuid import UUID, uuid4
 import psycopg
 from psycopg.types.json import Jsonb
 
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 from app.actions.schemas import ActionProposal
 from app.approval.schemas import ApprovalRecord
 from app.db.database import get_connection
@@ -127,7 +127,14 @@ class ApprovalRepository:
         except psycopg.Error as exc:
             raise ApprovalError from exc
 
-    def decide(self, approval_id: int, decision: Literal["approved", "rejected"], username: str, reason: str, execution_result: dict[str, Any] | None = None) -> ApprovalRecord:
+    def decide(
+        self,
+        approval_id: int,
+        decision: Literal["approved", "rejected"],
+        username: str,
+        reason: str,
+        execute_action: Callable[[psycopg.Connection, ActionProposal], dict[str, Any]] | None = None,
+    ) -> ApprovalRecord:
         now = datetime.now(timezone.utc)
         try:
             with get_connection(self.database_url) as connection:
@@ -152,13 +159,26 @@ class ApprovalRepository:
                     row["decision"] = "expired"
                     row["decided_at"] = now
                 else:
+                    execution_result = None
+                    proposal = ActionProposal.model_validate(row["proposal"])
+                    if decision == "approved":
+                        if execute_action is None:
+                            raise ApprovalError("An action executor is required to approve this request")
+                        execution_result = execute_action(connection, proposal)
                     connection.execute(
                         "UPDATE approvals SET decision = %s, decided_at = %s, decided_by = %s, reason = %s WHERE id = %s",
                         (decision, now, username, reason, approval_id),
                     )
                     action_status = "executed" if decision == "approved" else "rejected"
                     connection.execute("UPDATE actions SET status = %s, result = %s, executed_at = %s WHERE action_id = %s", (action_status, Jsonb(execution_result) if execution_result else None, now if execution_result else None, row["action_id"]))
-                    diagnosis = "Human approval granted; simulated action executed." if decision == "approved" else "Human approval rejected; action was not executed."
+                    verification = execution_result.get("verification", {}).get("status") if execution_result else None
+                    if decision == "approved" and verification == "SUCCESS":
+                        resolved = execution_result.get("resolved_incident_ids", [])
+                        diagnosis = f"Human approval granted; verification SUCCESS; resolved incidents: {resolved}."
+                    elif decision == "approved":
+                        diagnosis = f"Human approval granted; verification {verification}; action requires escalation."
+                    else:
+                        diagnosis = "Human approval rejected; action was not executed."
                     connection.execute("UPDATE agent_runs SET status = 'completed', diagnosis = %s, completed_at = %s WHERE run_id = %s AND status = 'paused'", (diagnosis, now, row["run_id"]))
                     row["decision"] = decision
                     row["decided_at"] = now

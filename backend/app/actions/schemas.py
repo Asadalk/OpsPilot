@@ -13,6 +13,44 @@ ActionType = Literal[
 ]
 RiskLevel = Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
 ActionStatus = Literal["proposed", "allowed", "denied", "approval_required", "executed"]
+VerificationStatus = Literal["SUCCESS", "FAILED", "INCONCLUSIVE"]
+
+
+class SimulatorSnapshot(BaseModel):
+    service: str
+    state: Literal["healthy", "degraded", "failed"]
+    metrics: dict[str, float]
+    latest_deployment: dict[str, str] | None = None
+
+
+class ActionAttempt(BaseModel):
+    attempt: int = Field(..., ge=1, le=2)
+    before: SimulatorSnapshot
+    execution: dict[str, Any]
+    after: SimulatorSnapshot
+    verification: VerificationStatus
+    reason: str
+    reinvestigation: SimulatorSnapshot | None = None
+
+
+class ActionVerification(BaseModel):
+    status: VerificationStatus
+    reason: str
+    attempt_count: int = Field(..., ge=0, le=2)
+    max_automatic_attempts: Literal[2] = 2
+    escalated: bool
+    attempts: list[ActionAttempt]
+
+
+class SimulatorActionResult(BaseModel):
+    status: Literal["simulated"] = "simulated"
+    action_type: ActionType
+    target: str
+    pre_action_state: SimulatorSnapshot | None = None
+    post_action_state: SimulatorSnapshot | None = None
+    verification: ActionVerification
+    resolved_incident_ids: list[int]
+    message: str
 
 
 class ActionProposal(BaseModel):

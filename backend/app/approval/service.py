@@ -1,6 +1,12 @@
-from app.approval.repository import ApprovalConflict, ApprovalRepository
+from typing import Literal
+
+import psycopg
+
+from app.actions.schemas import ActionProposal
+from app.approval.repository import ApprovalRepository
 from app.approval.schemas import ApprovalRecord
 from app.auth.schemas import UserPrincipal
+from app.db.simulator_actions import SimulatorActionRepository
 
 
 class ApprovalAuthorizationError(Exception):
@@ -8,13 +14,11 @@ class ApprovalAuthorizationError(Exception):
 
 
 class SimulatedActionExecutor:
-    def execute(self, proposal) -> dict:
-        return {
-            "status": "simulated",
-            "action_type": proposal.action_type,
-            "target": proposal.target,
-            "message": "No real infrastructure was changed.",
-        }
+    def __init__(self, repository: SimulatorActionRepository | None = None):
+        self.repository = repository or SimulatorActionRepository()
+
+    def execute(self, connection: psycopg.Connection, proposal: ActionProposal) -> dict:
+        return self.repository.execute(connection, proposal)
 
 
 class ApprovalService:
@@ -25,11 +29,8 @@ class ApprovalService:
     def get(self, approval_id: int) -> ApprovalRecord:
         return self.repository.get(approval_id)
 
-    def decide(self, approval_id: int, decision: str, principal: UserPrincipal, reason: str) -> ApprovalRecord:
+    def decide(self, approval_id: int, decision: Literal["approved", "rejected"], principal: UserPrincipal, reason: str) -> ApprovalRecord:
         if principal.role not in {"operator", "admin"}:
             raise ApprovalAuthorizationError
-        record = self.repository.get(approval_id)
-        if record.decision != "pending":
-            raise ApprovalConflict(f"Approval already decided: {record.decision}")
-        result = self.executor.execute(record.proposal) if decision == "approved" else None
-        return self.repository.decide(approval_id, decision, principal.username, reason, result)
+        execute = self.executor.execute if decision == "approved" else None
+        return self.repository.decide(approval_id, decision, principal.username, reason, execute)

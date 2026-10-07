@@ -23,6 +23,28 @@ type Approval = {
   execution_result: Record<string, unknown> | null;
 };
 
+type ActionVerification = {
+  status: "SUCCESS" | "FAILED" | "INCONCLUSIVE";
+  reason: string;
+  attempt_count: number;
+  max_automatic_attempts: number;
+  escalated: boolean;
+  attempts: Array<{
+    attempt: number;
+    before: { state: string; metrics: Record<string, number> };
+    after: { state: string; metrics: Record<string, number> };
+    verification: string;
+    reason: string;
+    reinvestigation?: { state: string; metrics: Record<string, number> };
+  }>;
+};
+
+function metricsSummary(metrics: Record<string, number>) {
+  const entries = Object.entries(metrics);
+  if (!entries.length) return "No metric samples";
+  return entries.map(([name, value]) => `${name}: ${value}`).join(" · ");
+}
+
 export default function ApprovalPage() {
   const params = useParams<{ approvalId: string }>();
   const [token, setToken] = useState("");
@@ -94,6 +116,27 @@ export default function ApprovalPage() {
                 </div>
               </>
             )}
+            {approval.execution_result && (() => {
+              const result = approval.execution_result as { verification?: ActionVerification; resolved_incident_ids?: number[] };
+              const verification = result.verification;
+              if (!verification) return null;
+              return (
+                <div className="mt-4 border-t border-slate-200 pt-4">
+                  <h2 className="font-semibold text-slate-900">Execution verification: {verification.status}</h2>
+                  <p className="mt-1">{verification.reason}</p>
+                  <p className="mt-1 text-xs text-slate-500">Attempts: {verification.attempt_count} / {verification.max_automatic_attempts}{verification.escalated ? " · Escalation required" : ""}</p>
+                  {verification.attempts.map((attempt) => (
+                    <div key={attempt.attempt} className="mt-3 rounded border border-slate-200 bg-white p-3">
+                      <p className="font-medium">Attempt {attempt.attempt}: {attempt.verification}</p>
+                      <p className="mt-1">Before · {attempt.before.state} · {metricsSummary(attempt.before.metrics)}</p>
+                      <p className="mt-1">After · {attempt.after.state} · {metricsSummary(attempt.after.metrics)}</p>
+                      {attempt.reinvestigation && <p className="mt-1">Reinvestigation · {attempt.reinvestigation.state} · {metricsSummary(attempt.reinvestigation.metrics)}</p>}
+                    </div>
+                  ))}
+                  {(result.resolved_incident_ids ?? []).length > 0 && <p className="mt-3 font-medium text-emerald-800">Resolved incident IDs: {result.resolved_incident_ids?.join(", ")}</p>}
+                </div>
+              );
+            })()}
           </div>
         )}
         {message && <p className="mt-4 text-sm text-slate-600">{message}</p>}
