@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from services.gemini import GeminiError, GeminiTimeout, extract_tasks
+from services.rag import retrieve
 
 
 class FakeClient:
@@ -27,9 +28,13 @@ def result(text):
 
 def test_valid_model_response():
     client = FakeClient([result('[{"task":"Ship release","owner":"Jo","deadline":"Friday","priority":"high"}]')])
-    tasks = asyncio.run(extract_tasks("Ship release Friday", client))
+    retrieved = retrieve("Production deployment verification")
+    tasks = asyncio.run(extract_tasks("Ship release Friday", client, retrieved))
     assert tasks[0]["task"] == "Ship release"
-    assert client.aio.models.generate_content.call_args.kwargs["config"]["response_mime_type"] == "application/json"
+    call = client.aio.models.generate_content.call_args.kwargs
+    assert call["config"]["response_mime_type"] == "application/json"
+    assert "RELEVANT OPERATIONAL GUIDELINES" in call["contents"]
+    assert "post-deployment verification" in call["contents"]
 
 
 def test_malformed_response_retries_once():

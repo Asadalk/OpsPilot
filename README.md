@@ -5,6 +5,7 @@ Ops Assistant turns unstructured operational text—meeting notes, emails, and t
 ## Features
 
 - Gemini task extraction with schema-constrained JSON output
+- Lightweight local RAG over example operational guidelines
 - Pydantic validation of every extracted task before database writes
 - SQLite persistence
 - Kanban board with status updates and task deletion
@@ -18,11 +19,19 @@ Ops Assistant turns unstructured operational text—meeting notes, emails, and t
 flowchart TD
   User --> Next[Next.js + TypeScript]
   Next -->|HTTP API| API[FastAPI]
-  API --> DB[(SQLite)]
-  API --> Gemini[Google Gemini API]
+  API --> RAG[Local guideline retrieval]
+  RAG --> Gemini[Google Gemini API]
+  Gemini --> Validate[Pydantic validation]
+  Validate --> DB[(SQLite)]
 ```
 
 The Gemini key is read by FastAPI from the backend environment. The browser only calls FastAPI.
+
+## RAG pipeline
+
+The checked-in `backend/guidelines/operational-guidelines.md` file is explicitly an example demo knowledge base, not production policy. The backend loads its paragraphs as chunks, normalizes tokens, calculates IDF-weighted lexical overlap, and sends the top relevant chunks (with source, chunk ID, and relevance score) to Gemini before extraction. Queries with no meaningful overlap receive no guideline context. This keeps retrieval local and explainable without an external vector database.
+
+The extraction contract is a JSON array of tasks with `task`, `owner`, `deadline`, and a `priority` enum. Gemini is asked for schema-constrained JSON, then the complete response is validated with Pydantic before any SQLite insert. Empty, malformed, or invalid responses are retried once; upstream failures try the preferred Flash model names in order and return a controlled 502/504 if they remain unavailable.
 
 ## Tech stack
 
@@ -67,13 +76,15 @@ Open http://localhost:3000. API and health URLs are http://localhost:8000 and ht
 
 ## Tests and checks
 
-Run backend tests offline (Gemini is mocked):
+Run backend tests offline (Gemini is mocked for deterministic failure-path tests):
 
 ```bash
 cd backend
 python -m pip install -r requirements.txt
 python -m pytest -q
 ```
+
+The RAG tests cover production outage, security exposure, deployment verification, irrelevant queries, source attribution, and prompt context wiring. For real Gemini verification, set `GEMINI_API_KEY` in `backend/.env` and run the live API flow described in `docs/resume-claim-verification.md`.
 
 Frontend type check and production build:
 
@@ -102,10 +113,11 @@ npm run build
 - **Keep Gemini on the backend:** the API key stays out of browser code and frontend configuration.
 - **Prefer structured output:** JSON schema gives the model a specific task shape and priority enum instead of relying on arbitrary prose parsing.
 - **Retry and fallback:** malformed output gets one stricter retry. Transient model/API errors try alternate Flash model names before returning an upstream error.
+- **Retrieval before inference:** guideline chunks are scored and included in the Gemini prompt before structured generation; they are never read after the model call.
 
 ## Limitations
 
-This is a single-user application with no authentication or user accounts. SQLite is not intended for large concurrent deployments. Model extraction can still make semantic mistakes, so users should review tasks before acting on them. The local Docker setup does not configure persistent database volumes.
+This is a single-user application with no authentication or user accounts. SQLite is not intended for large concurrent deployments. Model extraction can still make semantic mistakes, so users should review tasks before acting on them. The guideline file is illustrative and must be reviewed before use in a real organization. The local Docker setup does not configure persistent database volumes.
 
 ## Project layout
 
