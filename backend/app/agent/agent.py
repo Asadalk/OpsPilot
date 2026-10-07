@@ -55,6 +55,7 @@ class OpsAgent:
                 "input_schema": tool.input_schema.model_json_schema(),
             }
             for tool in self.tools.values()
+            if tool.kind == "read"
         ]
         try:
             for _ in range(self.max_steps):
@@ -127,8 +128,9 @@ class OpsAgent:
                     self._complete_safely(state, principal.username)
                     return state
 
-                if not decision.tool_name or decision.tool_name not in self.tools:
-                    self._failure(state, "malformed_model_response", "The model selected an unknown tool; no tool was run.")
+                if (not decision.tool_name or decision.tool_name not in self.tools
+                        or self.tools[decision.tool_name].kind != "read"):
+                    self._failure(state, "malformed_model_response", "The model selected an unknown or non-read-only tool; no tool was run.")
                     state.status = "failed"
                     state.diagnosis = "Investigation stopped because the model returned an invalid tool selection. Escalate for review."
                     self._complete_safely(state, principal.username)
