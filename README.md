@@ -38,6 +38,8 @@ The PostgreSQL migration creates `services`, `incidents`, `deployments`, `logs`,
 
 The operations simulator adds deterministic services including `payments-api`, `checkout-api`, `auth-api`, `inventory-api`, and `notification-api`. Investigation evidence is available without Gemini through `GET /services/{id}/health`, `/metrics`, `/logs`, `/deployments`, and `/incidents`.
 
+The deterministic Python tools in `backend/app/tools` expose the same evidence without FastAPI or Gemini. They validate typed inputs, bound result sizes, and return structured Pydantic results. Runbook search is intentionally an explicit placeholder until the later retrieval phase.
+
 The extraction contract is a JSON array of tasks with `task`, `owner`, `deadline`, and a `priority` enum. Gemini is asked for schema-constrained JSON, then the complete response is validated with Pydantic before any PostgreSQL insert. Empty, malformed, or invalid responses are retried once; upstream failures try the preferred Flash model names in order and return a controlled 502/504 if they remain unavailable.
 
 ## Tech stack
