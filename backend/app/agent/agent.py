@@ -29,7 +29,7 @@ class OpsAgent:
     async def investigate(self, user_request: str, principal: UserPrincipal | None = None) -> AgentState:
         principal = principal or UserPrincipal(username="internal-test", role="admin")
         state = AgentState(run_id=uuid4(), user_request=user_request)
-        self.repository.create_run(state.run_id, user_request)
+        self.repository.create_run(state.run_id, user_request, principal.username)
         state.knowledge = [
             KnowledgeCitation.model_validate(citation)
             for citation in self.knowledge_repository.search(user_request, top_k=3)
@@ -67,28 +67,31 @@ class OpsAgent:
                             update={"risk_level": policy_decision.risk_level, "status": action_status}
                         )
                         if policy_decision.outcome == "require_approval":
-                            state.approval = self.approval_service.repository.create_pending(state.run_id, state.proposed_action)
+                            state.approval = self.approval_service.repository.create_pending(
+                                state.run_id, state.proposed_action, principal.username,
+                                policy_decision.model_dump(mode="json"),
+                            )
                             state.proposed_action = state.proposed_action.model_copy(update={"status": "approval_required"})
                             state.status = "paused"
-                            self._complete(state)
+                            self._complete(state, principal.username, audit_action=False)
                             return state
                     state.status = "completed"
-                    self._complete(state)
+                    self._complete(state, principal.username)
                     return state
                 if not decision.tool_name or decision.tool_name not in self.tools:
                     raise ValueError(f"Unknown tool requested: {decision.tool_name}")
                 state.service = decision.arguments.get("service", state.service)
-                self._execute_tool(state, decision.tool_name, decision.arguments)
+                self._execute_tool(state, decision.tool_name, decision.arguments, principal.username)
             state.status = "failed"
             state.diagnosis = "Investigation exceeded the maximum tool-step limit."
-            self._complete(state)
+            self._complete(state, principal.username)
             return state
         except Exception:
             state.status = "failed"
-            self._complete(state)
+            self._complete(state, principal.username)
             raise
 
-    def _execute_tool(self, state: AgentState, tool_name: str, arguments: dict[str, Any]) -> None:
+    def _execute_tool(self, state: AgentState, tool_name: str, arguments: dict[str, Any], actor: str = "system") -> None:
         start_time = datetime.now(timezone.utc)
         result: dict[str, Any] | None = None
         error: str | None = None
@@ -123,11 +126,12 @@ class OpsAgent:
             event.result,
             event.success,
             event.error,
+            actor,
         )
         if not success:
             raise ToolError(error or "Tool failed")
 
-    def _complete(self, state: AgentState) -> None:
+    def _complete(self, state: AgentState, actor: str = "system", audit_action: bool = True) -> None:
         self.repository.complete_run(
             state.run_id,
             state.service,
@@ -141,6 +145,8 @@ class OpsAgent:
             state.diagnosis,
             state.proposed_action,
             state.status,
+            actor,
+            audit_action,
         )
 
     @staticmethod

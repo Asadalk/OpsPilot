@@ -8,12 +8,14 @@ from app.api.routes.simulator import build_simulator_router
 from app.api.routes.agent import build_agent_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.approvals import build_approval_router
+from app.api.routes.audit import build_audit_router
 from app.agent.agent import build_agent
 from app.agent.provider import GeminiDecisionProvider
 from app.core.config import settings
 from app.db.database import init_db
 from app.db.repositories import TaskRepository
 from app.db.simulator import SimulatorRepository
+from app.audit.repository import AuditRepository
 from app.services.simulator import SimulatorService
 from app.services.tasks import TaskService
 
@@ -53,3 +55,4 @@ app.include_router(build_simulator_router(simulator_service))
 app.include_router(build_agent_router(ops_agent))
 app.include_router(auth_router)
 app.include_router(build_approval_router(ops_agent.approval_service))
+app.include_router(build_audit_router(AuditRepository(settings.database_url)))

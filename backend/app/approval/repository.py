@@ -5,6 +5,7 @@ import psycopg
 from psycopg.types.json import Jsonb
 
 from typing import Any, Callable, Literal
+from app.audit.repository import append_audit_event
 from app.actions.schemas import ActionProposal
 from app.approval.schemas import ApprovalRecord
 from app.db.database import get_connection
@@ -27,7 +28,7 @@ class ApprovalRepository:
         self.database_url = database_url
         self.timeout_minutes = timeout_minutes
 
-    def create_pending(self, run_id: UUID, proposal: ActionProposal) -> ApprovalRecord:
+    def create_pending(self, run_id: UUID, proposal: ActionProposal, actor: str = "agent", policy_decision: dict | None = None) -> ApprovalRecord:
         action_id = uuid4()
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=self.timeout_minutes)
         try:
@@ -51,6 +52,15 @@ class ApprovalRepository:
                     "INSERT INTO approvals (run_id, action_id, expires_at, decision) VALUES (%s, %s, %s, %s) RETURNING *",
                     (run_id, action_id, expires_at, "pending"),
                 ).fetchone()
+                append_audit_event(connection, actor=actor, event_type="action.proposed", entity_type="action",
+                                   entity_id=action_id, run_id=run_id, reason=proposal.reason,
+                                   result={"status": "approval_required"}, details=proposal.model_dump(mode="json"))
+                append_audit_event(connection, actor=actor, event_type="policy.evaluated", entity_type="action",
+                                   entity_id=action_id, run_id=run_id, result=policy_decision or {},
+                                   details={"action_type": proposal.action_type})
+                append_audit_event(connection, actor=actor, event_type="approval.requested", entity_type="approval",
+                                   entity_id=row["id"], run_id=run_id, reason=proposal.reason,
+                                   result={"decision": "pending"}, details={"action_id": str(action_id), "proposal": proposal.model_dump(mode="json"), "expires_at": expires_at.isoformat()})
             return self._record(row, proposal, None)
         except psycopg.Error as exc:
             raise ApprovalError from exc
@@ -77,6 +87,10 @@ class ApprovalRepository:
         now = datetime.now(timezone.utc)
         try:
             with get_connection(self.database_url) as connection:
+                expired_rows = connection.execute(
+                    "SELECT id, run_id, action_id FROM approvals WHERE decision='pending' AND expires_at <= %s",
+                    (now,),
+                ).fetchall()
                 connection.execute(
                     "UPDATE approvals SET decision = 'expired', decided_at = %s, reason = 'Approval expired before a human decision.' "
                     "WHERE decision = 'pending' AND expires_at <= %s",
@@ -91,6 +105,15 @@ class ApprovalRepository:
                     "WHERE status = 'paused' AND run_id IN (SELECT run_id FROM approvals WHERE decision = 'expired')",
                     (now,),
                 )
+                for expired_row in expired_rows:
+                    append_audit_event(connection, actor="system:approval-timeout", event_type="approval.expired",
+                                       entity_type="approval", entity_id=expired_row["id"], run_id=expired_row["run_id"],
+                                       reason="Approval expired before a human decision.", result={"decision": "expired"},
+                                       details={"action_id": str(expired_row["action_id"])})
+                    append_audit_event(connection, actor="system:approval-timeout", event_type="agent.completed",
+                                       entity_type="run", entity_id=expired_row["run_id"], run_id=expired_row["run_id"],
+                                       reason="Approval expired; action was not executed.", result={"status": "completed"},
+                                       details={"approval_id": expired_row["id"]})
                 rows = connection.execute(
                     "SELECT approvals.*, actions.proposal, actions.result AS execution_result "
                     "FROM approvals JOIN actions ON actions.action_id = approvals.action_id "
@@ -119,6 +142,14 @@ class ApprovalRepository:
                         "UPDATE agent_runs SET status = 'completed', diagnosis = 'Approval expired; action was not executed.', completed_at = %s WHERE run_id = %s AND status = 'paused'",
                         (now, row["run_id"]),
                     )
+                    append_audit_event(connection, actor="system:approval-timeout", event_type="approval.expired",
+                                       entity_type="approval", entity_id=approval_id, run_id=row["run_id"],
+                                       reason="Approval expired before a human decision.", result={"decision": "expired"},
+                                       details={"action_id": str(row["action_id"])})
+                    append_audit_event(connection, actor="system:approval-timeout", event_type="agent.completed",
+                                       entity_type="run", entity_id=row["run_id"], run_id=row["run_id"],
+                                       reason="Approval expired; action was not executed.", result={"status": "completed"},
+                                       details={"approval_id": approval_id})
                     full = connection.execute(
                         "SELECT approvals.*, actions.proposal, actions.result AS execution_result FROM approvals "
                         "JOIN actions ON actions.action_id = approvals.action_id WHERE approvals.id = %s", (approval_id,)
@@ -152,6 +183,14 @@ class ApprovalRepository:
                     connection.execute("UPDATE approvals SET decision = 'expired', decided_at = %s, reason = 'Approval expired before a human decision.' WHERE id = %s", (now, approval_id))
                     connection.execute("UPDATE actions SET status = 'expired' WHERE action_id = %s", (row["action_id"],))
                     connection.execute("UPDATE agent_runs SET status = 'completed', diagnosis = 'Approval expired; action was not executed.', completed_at = %s WHERE run_id = %s AND status = 'paused'", (now, row["run_id"]))
+                    append_audit_event(connection, actor="system:approval-timeout", event_type="approval.expired",
+                                       entity_type="approval", entity_id=approval_id, run_id=row["run_id"],
+                                       reason="Approval expired before a human decision.", result={"decision": "expired"},
+                                       details={"action_id": str(row["action_id"])})
+                    append_audit_event(connection, actor="system:approval-timeout", event_type="agent.completed",
+                                       entity_type="run", entity_id=row["run_id"], run_id=row["run_id"],
+                                       reason="Approval expired; action was not executed.", result={"status": "completed"},
+                                       details={"approval_id": approval_id})
                     expired = True
                 else:
                     expired = False
@@ -172,6 +211,25 @@ class ApprovalRepository:
                     action_status = "executed" if decision == "approved" else "rejected"
                     connection.execute("UPDATE actions SET status = %s, result = %s, executed_at = %s WHERE action_id = %s", (action_status, Jsonb(execution_result) if execution_result else None, now if execution_result else None, row["action_id"]))
                     verification = execution_result.get("verification", {}).get("status") if execution_result else None
+                    append_audit_event(connection, actor=username, event_type="approval.granted" if decision == "approved" else "approval.rejected",
+                                       entity_type="approval", entity_id=approval_id, run_id=row["run_id"], reason=reason,
+                                       result={"decision": decision}, details={"action_id": str(row["action_id"])})
+                    if decision == "approved":
+                        append_audit_event(connection, actor=username, event_type="action.executed", entity_type="action",
+                                           entity_id=row["action_id"], run_id=row["run_id"], reason=proposal.reason,
+                                           result={"status": "simulated", "verification": verification},
+                                           details={"proposal": proposal.model_dump(mode="json"), "execution": execution_result})
+                        append_audit_event(connection, actor=username, event_type="verification.completed", entity_type="action",
+                                           entity_id=row["action_id"], run_id=row["run_id"],
+                                           reason=execution_result.get("verification", {}).get("reason"),
+                                           result=execution_result.get("verification", {}),
+                                           details={"pre_action_state": execution_result.get("pre_action_state"), "post_action_state": execution_result.get("post_action_state")})
+                        for incident_id in execution_result.get("resolved_incident_ids", []):
+                            incident = connection.execute("SELECT title FROM incidents WHERE id=%s", (incident_id,)).fetchone()
+                            append_audit_event(connection, actor=username, event_type="incident.resolved", entity_type="incident",
+                                               entity_id=incident_id, run_id=row["run_id"], reason="Action verification succeeded.",
+                                               result={"status": "resolved", "verification": verification},
+                                               details={"title": incident["title"] if incident else None, "action_id": str(row["action_id"])})
                     if decision == "approved" and verification == "SUCCESS":
                         resolved = execution_result.get("resolved_incident_ids", [])
                         diagnosis = f"Human approval granted; verification SUCCESS; resolved incidents: {resolved}."
@@ -184,6 +242,9 @@ class ApprovalRepository:
                     row["decided_at"] = now
                     row["decided_by"] = username
                     row["reason"] = reason
+                    append_audit_event(connection, actor=username, event_type="agent.completed", entity_type="run",
+                                       entity_id=row["run_id"], run_id=row["run_id"], reason=diagnosis,
+                                       result={"status": "completed"}, details={"approval_id": approval_id})
             if expired:
                 raise ApprovalConflict("Approval has expired")
             return self._record(row, ActionProposal.model_validate(row["proposal"]), execution_result)

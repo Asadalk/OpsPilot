@@ -52,6 +52,10 @@ Action types are separated into `READ` and `WRITE` tools. Write-capable operatio
 
 Authentication uses JWT bearer tokens from `POST /auth/token`. Roles are `viewer`, `operator`, and `admin`. Policy is evaluated by the backend after the agent proposes an action: viewers cannot restart services, operators require approval for high-risk actions, and admins are allowed according to the configured policy rules. The LLM cannot override the server-derived risk or policy outcome.
 
+The append-only audit trail records login results, incident and run activity, tool calls, policy decisions, proposals, approval decisions, simulated execution, verification, and resolution. Authenticated users can retrieve a complete incident timeline with `GET /audit/incidents/{incident_id}`. Audit rows are protected from update, delete, and truncate by database triggers.
+
+See [the architecture overview](docs/architecture.md), [phase log](docs/PHASE-LOG.md), [build gates](docs/BUILD-GATES.md), and [Phase 15 interview notes](docs/interview-defense/phase-15.md) for implementation and verification details.
+
 The extraction contract is a JSON array of tasks with `task`, `owner`, `deadline`, and a `priority` enum. Gemini is asked for schema-constrained JSON, then the complete response is validated with Pydantic before any PostgreSQL insert. Empty, malformed, or invalid responses are retried once; upstream failures try the preferred Flash model names in order and return a controlled 502/504 if they remain unavailable.
 
 ## Tech stack

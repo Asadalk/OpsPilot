@@ -116,6 +116,20 @@ def test_high_risk_action_pauses_then_approves_and_executes(database_path):
         run = connection.execute("SELECT status FROM agent_runs WHERE run_id = %s", (state.run_id,)).fetchone()
     assert action["status"] == "executed"
     assert run["status"] == "completed"
+    from app.audit.repository import AuditRepository
+    with get_connection(database_path) as connection:
+        incident = connection.execute("SELECT id FROM incidents WHERE title='Payments latency spike'").fetchone()
+    story = AuditRepository(database_path).incident_story(incident["id"])
+    event_types = [event.event_type for event in story.events]
+    assert "incident.created" in event_types
+    assert "agent.started" in event_types
+    assert "tool.called" in event_types
+    assert "action.proposed" in event_types
+    assert "approval.requested" in event_types
+    assert "approval.granted" in event_types
+    assert "action.executed" in event_types
+    assert "verification.completed" in event_types
+    assert "incident.resolved" in event_types
 
     with pytest.raises(ApprovalConflict):
         agent.approval_service.decide(state.approval.id, "approved", operator, "duplicate")
@@ -261,6 +275,11 @@ def test_expired_approval_is_closed_without_executing(database_path):
     assert action["status"] == "expired"
     assert run["status"] == "completed"
     assert "expired" in run["diagnosis"]
+    from app.audit.repository import AuditRepository
+    with get_connection(database_path) as connection:
+        incident_id = connection.execute("SELECT id FROM incidents WHERE title='Payments latency spike'").fetchone()["id"]
+    story = AuditRepository(database_path).incident_story(incident_id)
+    assert any(event.event_type == "approval.expired" for event in story.events)
     with pytest.raises(ApprovalConflict):
         agent.approval_service.decide(expired.id, "approved", operator, "too late")
 
@@ -288,3 +307,9 @@ def test_approval_api_authenticates_and_records_decision(database_path, api, mon
     assert response.json()["decision"] == "approved"
     assert response.json()["execution_result"]["status"] == "simulated"
     assert response.json()["execution_result"]["verification"]["status"] == "SUCCESS"
+    with get_connection(database_path) as connection:
+        incident_id = connection.execute("SELECT id FROM incidents WHERE title='Payments latency spike'").fetchone()["id"]
+    story = api("GET", f"/audit/incidents/{incident_id}", headers=headers)
+    assert story.status_code == 200
+    assert story.json()["incident"]["title"] == "Payments latency spike"
+    assert any(event["event_type"] == "incident.resolved" for event in story.json()["events"])

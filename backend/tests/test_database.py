@@ -1,3 +1,6 @@
+import psycopg
+import pytest
+
 from app.db.database import get_connection, init_db
 from app.db.repositories import TaskRepository
 from app.models.schemas import TaskCreate
@@ -28,8 +31,9 @@ def test_initial_migration_is_recorded(database_path):
             "006_agent_knowledge_citations.sql",
             "007_hypothesis_history.sql",
             "008_action_proposals.sql",
-            "009_policy_decisions.sql",
-            "010_human_approvals.sql",
+        "009_policy_decisions.sql",
+        "010_human_approvals.sql",
+        "011_audit_events.sql",
     }
 
 
@@ -50,3 +54,12 @@ def test_operational_domain_seed_is_queryable(database_path):
     assert counts["logs"] >= 8
     assert counts["metrics"] >= 8
     assert incident == {"title": "Elevated order latency", "name": "orders-api"}
+
+
+def test_audit_events_reject_mutation(database_path):
+    init_db(database_path)
+    with get_connection(database_path) as connection:
+        event_id = connection.execute("SELECT event_id FROM audit_events ORDER BY event_id LIMIT 1").fetchone()["event_id"]
+    with pytest.raises(psycopg.errors.RaiseException, match="audit_events are immutable"):
+        with get_connection(database_path) as connection:
+            connection.execute("UPDATE audit_events SET reason = 'tampered' WHERE event_id = %s", (event_id,))
