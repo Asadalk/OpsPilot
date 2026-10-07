@@ -26,6 +26,12 @@ class Settings:
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     gemini_fallback_models: str = os.getenv("GEMINI_FALLBACK_MODELS", "")
     environment: str = os.getenv("ENVIRONMENT", "development")
+    jwt_secret: str = os.getenv("JWT_SECRET", "ops-pilot-development-secret-change-me")
+    jwt_expire_minutes: int = _parse_timeout(os.getenv("JWT_EXPIRE_MINUTES", "60"))
+    auth_users_json: str = os.getenv(
+        "AUTH_USERS_JSON",
+        '{"viewer":{"password":"viewer","role":"viewer"},"operator":{"password":"operator","role":"operator"},"admin":{"password":"admin","role":"admin"}}',
+    )
 
 
 settings = Settings()

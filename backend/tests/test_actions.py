@@ -19,5 +19,5 @@ def test_action_tools_are_explicitly_classified_and_proposal_only(database_path)
     )
 
     assert isinstance(proposal, ActionProposal)
-    assert proposal.risk_level == "high"
+    assert proposal.risk_level == "HIGH"
     assert proposal.status == "proposed"

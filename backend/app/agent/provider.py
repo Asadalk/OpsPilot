@@ -40,7 +40,7 @@ class GeminiDecisionProvider:
                     "target": {"type": "STRING"},
                     "reason": {"type": "STRING"},
                     "evidence": {"type": "ARRAY", "items": {"type": "OBJECT"}},
-                    "risk_level": {"type": "STRING", "enum": ["low", "medium", "high"]},
+                    "risk_level": {"type": "STRING", "enum": ["LOW", "MEDIUM", "HIGH", "CRITICAL"]},
                     "status": {"type": "STRING", "enum": ["proposed"]},
                 },
                 "required": ["action_type", "target", "reason", "evidence", "risk_level", "status"],

@@ -4,21 +4,27 @@ from uuid import uuid4
 
 from app.agent.provider import DecisionProvider
 from app.agent.schemas import AgentState, AgentToolCall, KnowledgeCitation
+from app.auth.schemas import UserPrincipal
 from app.db.agent import AgentRepository, AgentRepositoryError
+from app.db.simulator import SimulatorRepository
+from app.policy.engine import PolicyEngine
 from app.rag.repository import KnowledgeRepository
 from app.tools.base import ToolError
 from app.tools.registry import build_default_tools
 
 
 class OpsAgent:
-    def __init__(self, repository: AgentRepository, provider: DecisionProvider, tools: dict, knowledge_repository: KnowledgeRepository, max_steps: int = 8):
+    def __init__(self, repository: AgentRepository, provider: DecisionProvider, tools: dict, knowledge_repository: KnowledgeRepository, simulator_repository: SimulatorRepository, policy_engine: PolicyEngine, max_steps: int = 8):
         self.repository = repository
         self.provider = provider
         self.tools = tools
         self.knowledge_repository = knowledge_repository
+        self.simulator_repository = simulator_repository
+        self.policy_engine = policy_engine
         self.max_steps = max_steps
 
-    async def investigate(self, user_request: str) -> AgentState:
+    async def investigate(self, user_request: str, principal: UserPrincipal | None = None) -> AgentState:
+        principal = principal or UserPrincipal(username="internal-test", role="admin")
         state = AgentState(run_id=uuid4(), user_request=user_request)
         self.repository.create_run(state.run_id, user_request)
         state.knowledge = [
@@ -45,7 +51,18 @@ class OpsAgent:
                     state.hypothesis_history.append(decision.hypotheses)
                 if decision.action == "diagnose":
                     state.diagnosis = self._cite_knowledge(decision.diagnosis, state)
-                    state.proposed_action = decision.proposed_action
+                    if decision.proposed_action:
+                        environment = self._resolve_environment(decision.proposed_action.target, state.service)
+                        policy_decision = self.policy_engine.evaluate(decision.proposed_action, principal, environment)
+                        state.policy_decision = policy_decision
+                        action_status = {
+                            "allow": "allowed",
+                            "deny": "denied",
+                            "require_approval": "approval_required",
+                        }[policy_decision.outcome]
+                        state.proposed_action = decision.proposed_action.model_copy(
+                            update={"risk_level": policy_decision.risk_level, "status": action_status}
+                        )
                     state.status = "completed"
                     self._complete(state)
                     return state
@@ -111,6 +128,7 @@ class OpsAgent:
             [[hypothesis.model_dump(mode="json") for hypothesis in hypotheses] for hypotheses in state.hypothesis_history],
             [citation.model_dump(mode="json") for citation in state.knowledge],
             state.proposed_action.model_dump(mode="json") if state.proposed_action else None,
+            state.policy_decision.model_dump(mode="json") if state.policy_decision else None,
             state.diagnosis,
             state.proposed_action,
             state.status,
@@ -126,7 +144,17 @@ class OpsAgent:
         )
         return f"{diagnosis}\n\nSources:\n{sources}"
 
+    def _resolve_environment(self, target: str, service: str | None) -> str:
+        candidate = target.split("@", 1)[0] or service
+        if candidate:
+            try:
+                return self.simulator_repository.get_health(self.simulator_repository.get_service_id(candidate))["environment"]
+            except Exception:
+                pass
+        return "production"
+
 
 def build_agent(database_url: str, provider: DecisionProvider) -> OpsAgent:
     knowledge_repository = KnowledgeRepository(database_url)
-    return OpsAgent(AgentRepository(database_url), provider, build_default_tools(database_url), knowledge_repository)
+    simulator_repository = SimulatorRepository(database_url)
+    return OpsAgent(AgentRepository(database_url), provider, build_default_tools(database_url), knowledge_repository, simulator_repository, PolicyEngine())

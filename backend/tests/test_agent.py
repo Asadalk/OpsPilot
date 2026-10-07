@@ -43,7 +43,7 @@ class ScriptedDecisionProvider:
                 target=self.service,
                 reason="Record the investigation for review.",
                 evidence=[],
-                risk_level="low",
+                risk_level="LOW",
                 status="proposed",
             ),
         )

@@ -9,9 +9,10 @@ ActionType = Literal[
     "generate_report",
     "restart_service",
     "rollback_deployment",
+    "delete_data",
 ]
-RiskLevel = Literal["low", "medium", "high"]
-ActionStatus = Literal["proposed"]
+RiskLevel = Literal["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+ActionStatus = Literal["proposed", "allowed", "denied", "approval_required"]
 
 
 class ActionProposal(BaseModel):

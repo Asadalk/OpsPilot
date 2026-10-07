@@ -58,6 +58,7 @@ class AgentRepository:
         hypothesis_history: list[list[dict]],
         knowledge_citations: list[dict],
         action_proposal: dict | None,
+        policy_decision: dict | None,
         diagnosis: str | None,
         proposed_action: str | None,
         status: str,
@@ -66,8 +67,8 @@ class AgentRepository:
             with get_connection(self.database_url) as connection:
                 connection.execute(
                     "UPDATE agent_runs SET service = %s, severity = %s, evidence = %s, hypotheses = %s, "
-                    "knowledge_citations = %s, hypothesis_history = %s, action_proposal = %s, diagnosis = %s, proposed_action = %s, status = %s, completed_at = NOW() WHERE run_id = %s",
-                    (service, severity, Jsonb(evidence), Jsonb(hypotheses), Jsonb(hypothesis_history), Jsonb(knowledge_citations), Jsonb(action_proposal) if action_proposal else None, diagnosis, action_proposal["reason"] if action_proposal else None, status, run_id),
+                    "knowledge_citations = %s, hypothesis_history = %s, action_proposal = %s, policy_decision = %s, diagnosis = %s, proposed_action = %s, status = %s, completed_at = NOW() WHERE run_id = %s",
+                    (service, severity, Jsonb(evidence), Jsonb(hypotheses), Jsonb(hypothesis_history), Jsonb(knowledge_citations), Jsonb(action_proposal) if action_proposal else None, Jsonb(policy_decision) if policy_decision else None, diagnosis, action_proposal["reason"] if action_proposal else None, status, run_id),
                 )
         except psycopg.Error as exc:
             raise AgentRepositoryError from exc

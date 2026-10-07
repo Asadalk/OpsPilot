@@ -3,12 +3,14 @@ from app.tools.base import Tool
 
 
 RISK_BY_ACTION: dict[str, RiskLevel] = {
-    "create_incident": "medium",
-    "update_incident": "medium",
-    "create_github_issue": "medium",
-    "generate_report": "low",
-    "restart_service": "high",
-    "rollback_deployment": "high",
+    "create_incident": "MEDIUM",
+    "update_incident": "MEDIUM",
+    "create_github_issue": "MEDIUM",
+    "generate_report": "LOW",
+    "send_notification": "MEDIUM",
+    "restart_service": "HIGH",
+    "rollback_deployment": "HIGH",
+    "delete_data": "CRITICAL",
 }
 
 

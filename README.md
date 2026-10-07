@@ -50,6 +50,8 @@ Agent diagnoses include structured competing hypotheses with model-assigned scor
 
 Action types are separated into `READ` and `WRITE` tools. Write-capable operations such as incident updates, GitHub issues, reports, restarts, and rollbacks currently produce deterministic proposals only. Every proposal includes its target, reason, evidence, risk level, and `proposed` status; nothing is executed automatically.
 
+Authentication uses JWT bearer tokens from `POST /auth/token`. Roles are `viewer`, `operator`, and `admin`. Policy is evaluated by the backend after the agent proposes an action: viewers cannot restart services, operators require approval for high-risk actions, and admins are allowed according to the configured policy rules. The LLM cannot override the server-derived risk or policy outcome.
+
 The extraction contract is a JSON array of tasks with `task`, `owner`, `deadline`, and a `priority` enum. Gemini is asked for schema-constrained JSON, then the complete response is validated with Pydantic before any PostgreSQL insert. Empty, malformed, or invalid responses are retried once; upstream failures try the preferred Flash model names in order and return a controlled 502/504 if they remain unavailable.
 
 ## Tech stack
