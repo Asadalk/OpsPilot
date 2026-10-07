@@ -62,6 +62,8 @@ OpsBench v1 contains 100 versioned operational scenarios across incident investi
 
 Phase 19 adds a paired prompt-only Gemini versus OpsPilot evaluator. Metric formulas and the initial measured slice are documented in [the Phase 19 notes](docs/interview-defense/phase-19.md); its JSON artifacts include raw predictions, per-case scores, latency, and model token usage.
 
+Agent runs also expose their actual persisted lifecycle through authenticated `GET /agent/runs/{run_id}/events`. The ordered PostgreSQL trace includes model decisions, retrieval, tool calls, policy, approval, simulated execution, verification, and run status, with durations when measurable. Viewers can read only runs they initiated; operators and admins can inspect runs. See [Phase 22 notes](docs/interview-defense/phase-22.md).
+
 The extraction contract is a JSON array of tasks with `task`, `owner`, `deadline`, and a `priority` enum. Gemini is asked for schema-constrained JSON, then the complete response is validated with Pydantic before any PostgreSQL insert. Empty, malformed, or invalid responses are retried once; upstream failures try the preferred Flash model names in order and return a controlled 502/504 if they remain unavailable.
 
 ## Tech stack

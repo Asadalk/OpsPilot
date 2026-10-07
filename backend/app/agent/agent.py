@@ -1,4 +1,5 @@
 import asyncio
+import time
 from datetime import datetime, timezone
 from typing import Any
 from uuid import uuid4
@@ -46,7 +47,23 @@ class OpsAgent:
             state.diagnosis = "Investigation could not start; database persistence failed. Escalate and retry after database recovery."
             return state
 
+        retrieval_started = time.perf_counter()
         await self._retrieve_knowledge(state, user_request)
+        try:
+            self.repository.record_event(
+                state.run_id, "retrieval", state.retrieval_status,
+                duration_ms=max(0, int((time.perf_counter() - retrieval_started) * 1000)),
+                details={"citation_count": len(state.knowledge), "mode": "hybrid"},
+                error=next((failure.category for failure in reversed(state.failure_states)
+                            if failure.category in {"retrieval_failure", "retrieval_timeout", "temporary_database_error"}
+                            and not failure.resolved), None),
+            )
+        except Exception as exc:
+            self._failure(state, self._database_category(exc), "Retrieval trace could not be persisted.")
+            state.status = "failed"
+            state.diagnosis = "Investigation stopped because its retrieval trace could not be stored. Escalate for review."
+            self._complete_safely(state, principal.username)
+            return state
         descriptions = [
             {
                 "name": tool.name,
@@ -58,8 +75,8 @@ class OpsAgent:
             if tool.kind == "read"
         ]
         try:
-            for _ in range(self.max_steps):
-                decision = await self._decide(state, descriptions)
+            for step in range(self.max_steps):
+                decision = await self._decide(state, descriptions, initial=(step == 0))
                 if decision is None:
                     state.status = "failed"
                     category = state.failure_states[-1].category
@@ -101,9 +118,19 @@ class OpsAgent:
                     state.escalation_required = unresolved_tool_failure or missing_operational_data or retrieval_unavailable
                     unsafe_evidence = unresolved_tool_failure or missing_operational_data or retrieval_unavailable
                     if decision.proposed_action and not unsafe_evidence:
+                        self.repository.record_event(
+                            state.run_id, "action_proposed", "proposed",
+                            tool=decision.proposed_action.action_type,
+                            details=decision.proposed_action.model_dump(mode="json"),
+                        )
                         environment = self._resolve_environment(decision.proposed_action.target, state.service)
                         policy_decision = self.policy_engine.evaluate(decision.proposed_action, principal, environment)
                         state.policy_decision = policy_decision
+                        self.repository.record_event(
+                            state.run_id, "policy", policy_decision.outcome,
+                            tool=decision.proposed_action.action_type,
+                            details={"decision": policy_decision.model_dump(mode="json")},
+                        )
                         action_status = {
                             "allow": "allowed",
                             "deny": "denied",
@@ -123,6 +150,11 @@ class OpsAgent:
                             return state
                     elif decision.proposed_action and unsafe_evidence:
                         state.warnings.append("An action proposal was withheld because required tool evidence is incomplete.")
+                        self.repository.record_event(
+                            state.run_id, "action_withheld", "withheld",
+                            tool=decision.proposed_action.action_type,
+                            error="required_tool_evidence_incomplete",
+                        )
                     state.diagnosis = self._with_uncertainty(diagnosis, state)
                     state.status = "failed" if state.escalation_required else "completed"
                     self._complete_safely(state, principal.username)
@@ -194,18 +226,14 @@ class OpsAgent:
         state.warnings.append("Knowledge retrieval failed; relevant guidance may exist and was not available to this run.")
         state.evidence.append({"retrieval_status": "failed", "error": category})
 
-    async def _decide(self, state: AgentState, descriptions: list[dict[str, Any]]):
+    async def _decide(self, state: AgentState, descriptions: list[dict[str, Any]], *, initial: bool = False):
         last_error: Exception | None = None
+        decision_started = time.perf_counter()
         for attempt in range(1, MAX_TRANSIENT_ATTEMPTS + 1):
             try:
                 decision = await asyncio.wait_for(
                     self.provider.decide(state, descriptions), timeout=self.llm_timeout_seconds
                 )
-                if attempt > 1:
-                    self._failure(state, error_category(last_error or TimeoutError(), operation="llm"),
-                                  "The model call recovered after a transient failure.", retryable=True,
-                                  attempts=attempt, resolved=True)
-                return decision
             except Exception as exc:
                 last_error = exc
                 retryable = is_transient_error(exc)
@@ -213,11 +241,30 @@ class OpsAgent:
                     await backoff(attempt)
                     continue
                 break
+            if attempt > 1:
+                self._failure(state, error_category(last_error or TimeoutError(), operation="llm"),
+                              "The model call recovered after a transient failure.", retryable=True,
+                              attempts=attempt, resolved=True)
+            stage = "diagnosis" if decision.action == "diagnose" else ("classify" if initial else "planning")
+            self.repository.record_event(
+                state.run_id, stage, "completed",
+                duration_ms=max(0, int((time.perf_counter() - decision_started) * 1000)),
+                model=getattr(self.provider, "model", None), tool=decision.tool_name,
+                details={"decision_action": decision.action, "service": decision.service,
+                         "attempts": attempt},
+            )
+            return decision
         category = "malformed_model_response" if isinstance(last_error, MalformedDecisionError) else error_category(last_error or RuntimeError(), operation="llm")
         self._failure(state, category,
                       "The model could not provide a valid decision; no diagnosis or action was inferred.",
                       retryable=is_transient_error(last_error) if last_error else False,
                       attempts=attempt)
+        self.repository.record_event(
+            state.run_id, "classify" if initial else "decision", "failed",
+            duration_ms=max(0, int((time.perf_counter() - decision_started) * 1000)),
+            model=getattr(self.provider, "model", None), error=category,
+            details={"attempts": attempt},
+        )
         return None
 
     async def _execute_tool(self, state: AgentState, tool_name: str, arguments: dict[str, Any], actor: str) -> bool:

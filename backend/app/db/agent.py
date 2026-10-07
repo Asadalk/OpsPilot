@@ -6,6 +6,7 @@ from psycopg.types.json import Jsonb
 
 from app.audit.repository import append_audit_event
 from app.db.database import get_connection
+from app.db.agent_events import append_agent_event
 
 
 class AgentRepositoryError(Exception):
@@ -26,6 +27,20 @@ class AgentRepository:
                 append_audit_event(connection, actor=actor, event_type="agent.started", entity_type="run",
                                    entity_id=run_id, run_id=run_id, reason=user_request,
                                    result={"status": "investigating"})
+                append_agent_event(connection, run_id=run_id, event_type="run.started", status="started",
+                                   details={"actor": actor})
+        except psycopg.Error as exc:
+            raise AgentRepositoryError from exc
+
+    def record_event(self, run_id: UUID, event_type: str, status: str, *,
+                     duration_ms: int | None = None, model: str | None = None,
+                     tool: str | None = None, error: str | None = None,
+                     details: dict | None = None) -> None:
+        try:
+            with get_connection(self.database_url) as connection:
+                append_agent_event(connection, run_id=run_id, event_type=event_type,
+                                   status=status, duration_ms=duration_ms, model=model,
+                                   tool=tool, error=error, details=details)
         except psycopg.Error as exc:
             raise AgentRepositoryError from exc
 
@@ -57,6 +72,20 @@ class AgentRepository:
                                    details={"call_index": call_index, "tool": tool,
                                             "arguments": arguments, "started_at": start_time.isoformat(),
                                             "finished_at": end_time.isoformat(), "result": result})
+                stage = {
+                    "get_service_health": "health",
+                    "get_metrics": "metrics",
+                    "search_logs": "logs",
+                    "get_recent_deployments": "deployment",
+                    "get_incident_history": "incident_history",
+                    "search_runbooks": "runbook_search",
+                }.get(tool, "tool")
+                append_agent_event(
+                    connection, run_id=run_id, event_type=stage,
+                    duration_ms=max(0, int((end_time - start_time).total_seconds() * 1000)),
+                    tool=tool, status="completed" if success else "failed", error=error,
+                    details={"call_index": call_index, "arguments": arguments, "result": result},
+                )
         except psycopg.Error as exc:
             raise AgentRepositoryError from exc
 
@@ -106,5 +135,10 @@ class AgentRepository:
                                    entity_type="run", entity_id=run_id, run_id=run_id,
                                    reason=diagnosis, result={"status": status},
                                    details={"service": service, "severity": severity})
+                append_agent_event(connection, run_id=run_id,
+                                   event_type="run.paused" if status == "paused" else "run.completed",
+                                   status=status,
+                                   details={"service": service, "severity": severity,
+                                            "diagnosis": diagnosis})
         except psycopg.Error as exc:
             raise AgentRepositoryError from exc
