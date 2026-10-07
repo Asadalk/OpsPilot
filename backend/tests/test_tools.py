@@ -1,3 +1,6 @@
+from pathlib import Path
+
+from app.rag.ingest import ingest_directory
 from app.tools.base import ToolInputError
 from app.tools.registry import build_default_tools
 
@@ -19,6 +22,7 @@ def test_operational_tools_are_standalone_and_structured(database_path):
 
 
 def test_tool_input_and_runbook_placeholder_errors_are_explicit(database_path):
+    ingest_directory(Path(__file__).resolve().parents[2] / "knowledge", database_path)
     tools = build_default_tools(database_path)
 
     try:
@@ -29,5 +33,6 @@ def test_tool_input_and_runbook_placeholder_errors_are_explicit(database_path):
         raise AssertionError("invalid tool input should fail explicitly")
 
     runbooks = tools["search_runbooks"].run({"query": "database timeout"})
-    assert runbooks.status == "not_implemented"
-    assert runbooks.matches == []
+    assert runbooks.status == "ok"
+    assert runbooks.matches
+    assert runbooks.matches[0].source in {"runbooks/database-timeout.md", "runbooks/payment-latency.md"}

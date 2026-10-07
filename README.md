@@ -42,6 +42,8 @@ The deterministic Python tools in `backend/app/tools` expose the same evidence w
 
 The first Ops Agent is investigation-only. `POST /agent/investigate` runs a bounded direct loop in which Gemini selects only registered read-only tools, observes their results, and returns a diagnosis. Each run and tool call is recorded in PostgreSQL; no action execution tool is available.
 
+Operational knowledge is stored under `knowledge/` and ingested with `PYTHONPATH=backend backend/.venv/bin/python -m app.rag.ingest --knowledge-dir knowledge`. PostgreSQL + pgvector stores the cleaned chunks and 128-dimensional embeddings. Retrieval returns provenance and is included as cited supporting context in agent diagnoses.
+
 The extraction contract is a JSON array of tasks with `task`, `owner`, `deadline`, and a `priority` enum. Gemini is asked for schema-constrained JSON, then the complete response is validated with Pydantic before any PostgreSQL insert. Empty, malformed, or invalid responses are retried once; upstream failures try the preferred Flash model names in order and return a controlled 502/504 if they remain unavailable.
 
 ## Tech stack

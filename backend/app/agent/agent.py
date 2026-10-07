@@ -3,22 +3,29 @@ from typing import Any
 from uuid import uuid4
 
 from app.agent.provider import DecisionProvider
-from app.agent.schemas import AgentState, AgentToolCall
+from app.agent.schemas import AgentState, AgentToolCall, KnowledgeCitation
 from app.db.agent import AgentRepository, AgentRepositoryError
+from app.rag.repository import KnowledgeRepository
 from app.tools.base import ToolError
 from app.tools.registry import build_default_tools
 
 
 class OpsAgent:
-    def __init__(self, repository: AgentRepository, provider: DecisionProvider, tools: dict, max_steps: int = 8):
+    def __init__(self, repository: AgentRepository, provider: DecisionProvider, tools: dict, knowledge_repository: KnowledgeRepository, max_steps: int = 8):
         self.repository = repository
         self.provider = provider
         self.tools = tools
+        self.knowledge_repository = knowledge_repository
         self.max_steps = max_steps
 
     async def investigate(self, user_request: str) -> AgentState:
         state = AgentState(run_id=uuid4(), user_request=user_request)
         self.repository.create_run(state.run_id, user_request)
+        state.knowledge = [
+            KnowledgeCitation.model_validate(citation)
+            for citation in self.knowledge_repository.search(user_request, top_k=3)
+        ]
+        state.evidence.append({"knowledge": [citation.model_dump(mode="json") for citation in state.knowledge]})
         descriptions = [
             {
                 "name": tool.name,
@@ -34,7 +41,7 @@ class OpsAgent:
                 state.severity = decision.severity or state.severity
                 state.hypotheses = decision.hypotheses or state.hypotheses
                 if decision.action == "diagnose":
-                    state.diagnosis = decision.diagnosis
+                    state.diagnosis = self._cite_knowledge(decision.diagnosis, state)
                     state.proposed_action = decision.proposed_action
                     state.status = "completed"
                     self._complete(state)
@@ -98,11 +105,23 @@ class OpsAgent:
             state.severity,
             state.evidence,
             state.hypotheses,
+            [citation.model_dump(mode="json") for citation in state.knowledge],
             state.diagnosis,
             state.proposed_action,
             state.status,
         )
 
+    @staticmethod
+    def _cite_knowledge(diagnosis: str | None, state: AgentState) -> str | None:
+        if not diagnosis or not state.knowledge or "Sources:" in diagnosis:
+            return diagnosis
+        sources = "\n".join(
+            f"[{index}] {citation.source}"
+            for index, citation in enumerate(state.knowledge, start=1)
+        )
+        return f"{diagnosis}\n\nSources:\n{sources}"
+
 
 def build_agent(database_url: str, provider: DecisionProvider) -> OpsAgent:
-    return OpsAgent(AgentRepository(database_url), provider, build_default_tools(database_url))
+    knowledge_repository = KnowledgeRepository(database_url)
+    return OpsAgent(AgentRepository(database_url), provider, build_default_tools(database_url), knowledge_repository)

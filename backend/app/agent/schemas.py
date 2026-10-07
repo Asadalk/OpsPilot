@@ -19,6 +19,14 @@ class AgentToolCall(BaseModel):
     error: str | None = None
 
 
+class KnowledgeCitation(BaseModel):
+    source: str
+    document: str
+    chunk: int
+    similarity: float
+    content: str
+
+
 class AgentState(BaseModel):
     run_id: UUID
     user_request: str
@@ -28,6 +36,7 @@ class AgentState(BaseModel):
     hypotheses: list[str] = Field(default_factory=list)
     tool_calls: list[AgentToolCall] = Field(default_factory=list)
     tool_results: list[dict[str, Any]] = Field(default_factory=list)
+    knowledge: list[KnowledgeCitation] = Field(default_factory=list)
     diagnosis: str | None = None
     proposed_action: str | None = None
     status: AgentStatus = "investigating"

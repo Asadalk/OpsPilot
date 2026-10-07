@@ -53,13 +53,15 @@ class IncidentsToolResult(BaseModel):
 
 
 class RunbookMatch(BaseModel):
-    title: str
-    summary: str
     source: str
+    document: str
+    chunk: int
+    similarity: float
+    content: str
 
 
 class RunbookSearchResult(BaseModel):
     query: str
     matches: list[RunbookMatch]
-    status: Literal["not_implemented"]
+    status: Literal["ok", "empty"]
     message: str

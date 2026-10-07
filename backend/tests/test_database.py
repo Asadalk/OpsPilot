@@ -24,6 +24,8 @@ def test_initial_migration_is_recorded(database_path):
         "002_operational_domain.sql",
         "003_ops_simulator.sql",
         "004_agent_runs.sql",
+            "005_knowledge_vectors.sql",
+            "006_agent_knowledge_citations.sql",
     }
 
 

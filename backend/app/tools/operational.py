@@ -1,4 +1,5 @@
 from app.db.simulator import ServiceNotFoundError, SimulatorRepository, SimulatorRepositoryError
+from app.rag.repository import KnowledgeRepository, KnowledgeRepositoryError
 from app.tools.base import Tool, ToolExecutionError
 from app.tools.schemas import (
     BoundedServiceToolInput,
@@ -88,14 +89,21 @@ class GetIncidentHistory(OperationalTool):
 
 class SearchRunbooks(Tool[RunbookSearchInput, RunbookSearchResult]):
     name = "search_runbooks"
-    description = "Placeholder for deterministic runbook search; full retrieval is a later phase."
+    description = "Search ingested operational knowledge using exact vector similarity and return provenance."
     input_schema = RunbookSearchInput
     result_schema = RunbookSearchResult
 
+    def __init__(self, repository: KnowledgeRepository):
+        self.repository = repository
+
     def execute(self, parameters: RunbookSearchInput) -> RunbookSearchResult:
-        return RunbookSearchResult(
+        try:
+            matches = self.repository.search(parameters.query, top_k=3)
+        except KnowledgeRepositoryError as exc:
+            raise ToolExecutionError("Knowledge database unavailable") from exc
+        return self.result_schema(
             query=parameters.query,
-            matches=[],
-            status="not_implemented",
-            message="Runbook search is not implemented in Phase 6.",
+            matches=matches,
+            status="ok" if matches else "empty",
+            message="Retrieved knowledge is supporting context, not an execution authority.",
         )

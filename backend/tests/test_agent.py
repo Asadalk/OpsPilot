@@ -1,6 +1,9 @@
 from app.agent.agent import build_agent
 from app.agent.schemas import AgentDecision
+from pathlib import Path
+
 from app.db.database import get_connection, init_db
+from app.rag.ingest import ingest_directory
 
 
 class ScriptedDecisionProvider:
@@ -33,6 +36,7 @@ class ScriptedDecisionProvider:
 
 def test_agent_reconstructs_five_incident_investigations(database_path):
     init_db(database_path)
+    ingest_directory(Path(__file__).resolve().parents[2] / "knowledge", database_path)
     services = ["payments-api", "checkout-api", "notification-api", "inventory-api", "orders-api"]
     run_ids = []
 

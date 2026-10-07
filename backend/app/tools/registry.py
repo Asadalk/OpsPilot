@@ -1,5 +1,6 @@
 from app.core.config import settings
 from app.db.simulator import SimulatorRepository
+from app.rag.repository import KnowledgeRepository
 from app.tools.base import Tool
 from app.tools.operational import (
     GetIncidentHistory,
@@ -13,12 +14,13 @@ from app.tools.operational import (
 
 def build_default_tools(database_url: str = settings.database_url) -> dict[str, Tool]:
     repository = SimulatorRepository(database_url)
+    knowledge_repository = KnowledgeRepository(database_url)
     tools = [
         GetServiceHealth(repository),
         GetMetrics(repository),
         SearchLogs(repository),
         GetRecentDeployments(repository),
         GetIncidentHistory(repository),
-        SearchRunbooks(),
+        SearchRunbooks(knowledge_repository),
     ]
     return {tool.name: tool for tool in tools}

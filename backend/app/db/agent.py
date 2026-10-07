@@ -55,6 +55,7 @@ class AgentRepository:
         severity: str | None,
         evidence: list[dict],
         hypotheses: list[str],
+        knowledge_citations: list[dict],
         diagnosis: str | None,
         proposed_action: str | None,
         status: str,
@@ -63,8 +64,8 @@ class AgentRepository:
             with get_connection(self.database_url) as connection:
                 connection.execute(
                     "UPDATE agent_runs SET service = %s, severity = %s, evidence = %s, hypotheses = %s, "
-                    "diagnosis = %s, proposed_action = %s, status = %s, completed_at = NOW() WHERE run_id = %s",
-                    (service, severity, Jsonb(evidence), Jsonb(hypotheses), diagnosis, proposed_action, status, run_id),
+                    "knowledge_citations = %s, diagnosis = %s, proposed_action = %s, status = %s, completed_at = NOW() WHERE run_id = %s",
+                    (service, severity, Jsonb(evidence), Jsonb(hypotheses), Jsonb(knowledge_citations), diagnosis, proposed_action, status, run_id),
                 )
         except psycopg.Error as exc:
             raise AgentRepositoryError from exc

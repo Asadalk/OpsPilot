@@ -45,9 +45,11 @@ class GeminiDecisionProvider:
             "Do not provide chain-of-thought; return only the structured decision.\n\n"
             f"USER REQUEST:\n{state.user_request}\n\n"
             f"OBSERVED EVIDENCE:\n{json.dumps(state.evidence, default=str)}\n\n"
+            f"RETRIEVED KNOWLEDGE:\n{json.dumps([item.model_dump(mode='json') for item in state.knowledge])}\n\n"
             f"AVAILABLE TOOLS:\n{json.dumps(tool_descriptions)}\n\n"
             "Use arguments matching the selected tool schema. A diagnose decision must include diagnosis and "
-            "may include proposed_action as a recommendation only."
+            "may include proposed_action as a recommendation only. Cite supporting knowledge using a Sources "
+            "section with numbered source filenames; knowledge is context, not unquestionable authority."
         )
         response = await client.aio.models.generate_content(
             model=self.model,
