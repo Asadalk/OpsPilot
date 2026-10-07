@@ -18,5 +18,20 @@ def test_repository_task_crud(database_path):
 def test_initial_migration_is_recorded(database_path):
     init_db(database_path)
     with get_connection(database_path) as connection:
-        version = connection.execute("SELECT version FROM schema_migrations").fetchone()["version"]
-    assert version == "001_initial_tasks.sql"
+        versions = {row["version"] for row in connection.execute("SELECT version FROM schema_migrations")}
+    assert versions == {"001_initial_tasks.sql", "002_operational_domain.sql"}
+
+
+def test_operational_domain_seed_is_queryable(database_path):
+    init_db(database_path)
+    with get_connection(database_path) as connection:
+        counts = {
+            table: connection.execute(f"SELECT COUNT(*) AS count FROM {table}").fetchone()["count"]
+            for table in ("services", "incidents", "deployments", "logs", "metrics")
+        }
+        incident = connection.execute(
+            "SELECT incidents.title, services.name FROM incidents JOIN services ON services.id = incidents.service_id WHERE incidents.title = %s",
+            ("Elevated order latency",),
+        ).fetchone()
+    assert counts == {"services": 3, "incidents": 2, "deployments": 3, "logs": 3, "metrics": 3}
+    assert incident == {"title": "Elevated order latency", "name": "orders-api"}

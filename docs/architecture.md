@@ -1,6 +1,6 @@
 # Architecture
 
-## Current Phase 2 structure
+## Current Phase 4 structure
 
 ```text
 frontend (Next.js)
@@ -24,6 +24,8 @@ backend/app/main.py (FastAPI application)
     |       owns Pydantic request, model-output, and response schemas
     +-- app/core/config.py
             owns environment-backed settings
+
+PostgreSQL currently contains the original `tasks` table plus the operational domain tables created by `002_operational_domain.sql`: `services`, `incidents`, `deployments`, `logs`, and `metrics`. Incidents, deployments, logs, and metrics reference `services.id` with foreign keys. Seed rows make the domain queryable immediately after an empty database is migrated.
 ```
 
 `backend/main.py`, `backend/models.py`, `backend/database.py`, and the old service and route paths are compatibility shims. The container starts `app.main:app` directly.

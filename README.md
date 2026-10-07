@@ -8,6 +8,7 @@ Ops Assistant turns unstructured operational text—meeting notes, emails, and t
 - Lightweight local RAG over example operational guidelines
 - Pydantic validation of every extracted task before database writes
 - PostgreSQL persistence through Docker Compose
+- Seeded operational domain tables for services, incidents, deployments, logs, and metrics
 - Kanban board with status updates and task deletion
 - Clear API and UI handling for validation, database, and Gemini failures
 - One retry for malformed model output and Flash model fallback after upstream API errors
@@ -30,6 +31,10 @@ The Gemini key is read by FastAPI from the backend environment. The browser only
 ## RAG pipeline
 
 The checked-in `backend/guidelines/operational-guidelines.md` file is explicitly an example demo knowledge base, not production policy. The backend loads its paragraphs as chunks, normalizes tokens, calculates IDF-weighted lexical overlap, and sends the top relevant chunks (with source, chunk ID, and relevance score) to Gemini before extraction. Queries with no meaningful overlap receive no guideline context. This keeps retrieval local and explainable without an external vector database.
+
+## Operational domain
+
+The PostgreSQL migration creates `services`, `incidents`, `deployments`, `logs`, and `metrics`. The latter four reference `services` with foreign keys. Seed data is included so the database can be inspected immediately after `docker compose up`.
 
 The extraction contract is a JSON array of tasks with `task`, `owner`, `deadline`, and a `priority` enum. Gemini is asked for schema-constrained JSON, then the complete response is validated with Pydantic before any PostgreSQL insert. Empty, malformed, or invalid responses are retried once; upstream failures try the preferred Flash model names in order and return a controlled 502/504 if they remain unavailable.
 
