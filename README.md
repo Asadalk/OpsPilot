@@ -48,6 +48,8 @@ Knowledge search supports `semantic`, `keyword`, and `hybrid` modes. Hybrid is t
 
 Agent diagnoses include structured competing hypotheses with model-assigned scores and supporting or contradicting evidence. These scores are not calibrated probabilities. The agent persists hypothesis history and must gather additional evidence for ambiguous scenarios before finalizing a diagnosis.
 
+Action types are separated into `READ` and `WRITE` tools. Write-capable operations such as incident updates, GitHub issues, reports, restarts, and rollbacks currently produce deterministic proposals only. Every proposal includes its target, reason, evidence, risk level, and `proposed` status; nothing is executed automatically.
+
 The extraction contract is a JSON array of tasks with `task`, `owner`, `deadline`, and a `priority` enum. Gemini is asked for schema-constrained JSON, then the complete response is validated with Pydantic before any PostgreSQL insert. Empty, malformed, or invalid responses are retried once; upstream failures try the preferred Flash model names in order and return a controlled 502/504 if they remain unavailable.
 
 ## Tech stack

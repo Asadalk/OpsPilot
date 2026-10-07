@@ -1,5 +1,6 @@
 from app.agent.agent import build_agent
 from app.agent.schemas import AgentDecision, Hypothesis
+from app.actions.schemas import ActionProposal
 from pathlib import Path
 
 from app.db.database import get_connection, init_db
@@ -37,7 +38,14 @@ class ScriptedDecisionProvider:
             action="diagnose",
             service=self.service,
             diagnosis=f"Evidence for {self.service} was collected from five deterministic tools.",
-            proposed_action="Review the evidence and decide whether an approved action is needed.",
+            proposed_action=ActionProposal(
+                action_type="generate_report",
+                target=self.service,
+                reason="Record the investigation for review.",
+                evidence=[],
+                risk_level="low",
+                status="proposed",
+            ),
         )
 
 

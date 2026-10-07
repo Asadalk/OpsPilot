@@ -30,6 +30,7 @@ class OpsAgent:
             {
                 "name": tool.name,
                 "description": tool.description,
+                "kind": tool.kind,
                 "input_schema": tool.input_schema.model_json_schema(),
             }
             for tool in self.tools.values()
@@ -109,6 +110,7 @@ class OpsAgent:
             [hypothesis.model_dump(mode="json") for hypothesis in state.hypotheses],
             [[hypothesis.model_dump(mode="json") for hypothesis in hypotheses] for hypotheses in state.hypothesis_history],
             [citation.model_dump(mode="json") for citation in state.knowledge],
+            state.proposed_action.model_dump(mode="json") if state.proposed_action else None,
             state.diagnosis,
             state.proposed_action,
             state.status,

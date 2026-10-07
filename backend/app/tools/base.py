@@ -1,10 +1,11 @@
 from abc import ABC, abstractmethod
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ValidationError
 
 InputModel = TypeVar("InputModel", bound=BaseModel)
 ResultModel = TypeVar("ResultModel", bound=BaseModel)
+ToolKind = Literal["read", "write"]
 
 
 class ToolError(Exception):
@@ -24,6 +25,7 @@ class Tool(Generic[InputModel, ResultModel], ABC):
     description: str
     input_schema: type[InputModel]
     result_schema: type[ResultModel]
+    kind: ToolKind = "read"
 
     def run(self, payload: dict[str, Any] | InputModel) -> ResultModel:
         try:

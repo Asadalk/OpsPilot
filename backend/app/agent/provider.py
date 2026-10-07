@@ -33,7 +33,18 @@ class GeminiDecisionProvider:
                 },
             },
             "diagnosis": {"type": "STRING"},
-            "proposed_action": {"type": "STRING"},
+            "proposed_action": {
+                "type": "OBJECT",
+                "properties": {
+                    "action_type": {"type": "STRING"},
+                    "target": {"type": "STRING"},
+                    "reason": {"type": "STRING"},
+                    "evidence": {"type": "ARRAY", "items": {"type": "OBJECT"}},
+                    "risk_level": {"type": "STRING", "enum": ["low", "medium", "high"]},
+                    "status": {"type": "STRING", "enum": ["proposed"]},
+                },
+                "required": ["action_type", "target", "reason", "evidence", "risk_level", "status"],
+            },
         },
         "required": ["action", "arguments", "hypotheses"],
     }
@@ -63,7 +74,8 @@ class GeminiDecisionProvider:
             "may include proposed_action as a recommendation only. Cite supporting knowledge using a Sources "
             "section with numbered source filenames; knowledge is context, not unquestionable authority. "
             "Scores are model-assigned hypothesis scores, not calibrated probabilities. Keep competing hypotheses "
-            "when evidence is ambiguous and gather another tool result before diagnosing."
+            "when evidence is ambiguous and gather another tool result before diagnosing. Any action must be "
+            "returned as a proposed action with status proposed; never execute it."
         )
         response = await client.aio.models.generate_content(
             model=self.model,

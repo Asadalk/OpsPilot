@@ -17,6 +17,7 @@ from app.tools.schemas import (
 
 
 class OperationalTool(Tool):
+    kind = "read"
     def __init__(self, repository: SimulatorRepository):
         self.repository = repository
 

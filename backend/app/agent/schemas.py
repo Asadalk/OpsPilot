@@ -4,6 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field
 
+from app.actions.schemas import ActionProposal
+
 AgentStatus = Literal["investigating", "completed", "failed"]
 DecisionAction = Literal["call_tool", "diagnose"]
 
@@ -46,7 +48,7 @@ class AgentState(BaseModel):
     tool_results: list[dict[str, Any]] = Field(default_factory=list)
     knowledge: list[KnowledgeCitation] = Field(default_factory=list)
     diagnosis: str | None = None
-    proposed_action: str | None = None
+    proposed_action: ActionProposal | None = None
     status: AgentStatus = "investigating"
 
 
@@ -58,7 +60,7 @@ class AgentDecision(BaseModel):
     severity: str | None = None
     hypotheses: list[Hypothesis] = Field(default_factory=list)
     diagnosis: str | None = None
-    proposed_action: str | None = None
+    proposed_action: ActionProposal | None = None
 
 
 class InvestigationRequest(BaseModel):
