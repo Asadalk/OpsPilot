@@ -30,6 +30,8 @@ PostgreSQL currently contains the original `tasks` table plus the operational do
 The deterministic simulator data is created by `003_ops_simulator.sql`. The read-only simulator routes use `app/db/simulator.py` and `app/services/simulator.py`; they query PostgreSQL directly through the repository boundary and never call Gemini.
 
 Phase 6 adds `app/tools`: `Tool` defines typed input/result schemas and explicit execution errors, `registry.py` builds the available tools, and `operational.py` implements the six read-only tools. The tools call the simulator repository directly and are independently executable without FastAPI or Gemini.
+
+Phase 7 adds one direct `OpsAgent` loop. `GeminiDecisionProvider` chooses a registered tool or a final diagnosis, `OpsAgent` executes the selected read-only tool, and `agent_runs` plus `agent_tool_calls` store the request, evidence, timing, arguments, results, failures, and diagnosis. No write-capable tool is registered.
 ```
 
 `backend/main.py`, `backend/models.py`, `backend/database.py`, and the old service and route paths are compatibility shims. The container starts `app.main:app` directly.

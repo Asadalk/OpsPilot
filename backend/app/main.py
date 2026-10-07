@@ -5,6 +5,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.tasks import build_task_router
 from app.api.routes.simulator import build_simulator_router
+from app.api.routes.agent import build_agent_router
+from app.agent.agent import build_agent
+from app.agent.provider import GeminiDecisionProvider
 from app.core.config import settings
 from app.db.database import init_db
 from app.db.repositories import TaskRepository
@@ -14,6 +17,7 @@ from app.services.tasks import TaskService
 
 task_service = TaskService(TaskRepository(settings.database_url))
 simulator_service = SimulatorService(SimulatorRepository(settings.database_url))
+ops_agent = build_agent(settings.database_url, GeminiDecisionProvider())
 
 
 @asynccontextmanager
@@ -44,3 +48,4 @@ async def read_root() -> dict[str, str]:
 
 app.include_router(build_task_router(task_service))
 app.include_router(build_simulator_router(simulator_service))
+app.include_router(build_agent_router(ops_agent))

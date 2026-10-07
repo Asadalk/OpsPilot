@@ -19,7 +19,12 @@ def test_initial_migration_is_recorded(database_path):
     init_db(database_path)
     with get_connection(database_path) as connection:
         versions = {row["version"] for row in connection.execute("SELECT version FROM schema_migrations")}
-    assert versions == {"001_initial_tasks.sql", "002_operational_domain.sql", "003_ops_simulator.sql"}
+    assert versions == {
+        "001_initial_tasks.sql",
+        "002_operational_domain.sql",
+        "003_ops_simulator.sql",
+        "004_agent_runs.sql",
+    }
 
 
 def test_operational_domain_seed_is_queryable(database_path):
