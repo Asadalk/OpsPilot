@@ -57,6 +57,7 @@ class GeminiDecisionProvider:
 
     def __init__(self, model: str = settings.gemini_model):
         self.model = model
+        self.usage_records: list[dict[str, int | None]] = []
 
     async def decide(self, state: AgentState, tool_descriptions: list[dict[str, Any]]) -> AgentDecision:
         if not settings.gemini_api_key.strip():
@@ -92,6 +93,12 @@ class GeminiDecisionProvider:
             contents=prompt,
             config={"response_mime_type": "application/json", "response_schema": self.response_schema},
         )
+        usage = getattr(response, "usage_metadata", None)
+        self.usage_records.append({
+            "input_tokens": getattr(usage, "prompt_token_count", None),
+            "output_tokens": getattr(usage, "candidates_token_count", None),
+            "total_tokens": getattr(usage, "total_token_count", None),
+        })
         try:
             return AgentDecision.model_validate(json.loads(response.text or "{}"))
         except (json.JSONDecodeError, ValidationError, TypeError) as exc:

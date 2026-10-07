@@ -30,7 +30,7 @@ VALID_OUTCOMES = {
 }
 REQUIRED_FIELDS = {
     "id", "category", "input", "service", "expected_root_cause", "allowed_tools",
-    "expected_action", "approval_required", "expected_outcome", "controls",
+    "expected_tool_calls", "expected_action", "requested_action", "approval_required", "expected_outcome", "controls",
 }
 
 
@@ -64,6 +64,13 @@ def load_dataset(path: Path = DEFAULT_DATASET) -> tuple[list[dict[str, Any]], st
             raise OpsBenchValidationError(f"{scenario_id}: input and service are required")
         if not isinstance(scenario["allowed_tools"], list) or not set(scenario["allowed_tools"]) <= VALID_TOOLS:
             raise OpsBenchValidationError(f"{scenario_id}: allowed_tools contains an unknown tool")
+        if not isinstance(scenario["expected_tool_calls"], list):
+            raise OpsBenchValidationError(f"{scenario_id}: expected_tool_calls must be an array")
+        for expected_call in scenario["expected_tool_calls"]:
+            if expected_call.get("tool") not in scenario["allowed_tools"]:
+                raise OpsBenchValidationError(f"{scenario_id}: expected tool must be allowed")
+            if expected_call.get("arguments", {}).get("service") != scenario["service"]:
+                raise OpsBenchValidationError(f"{scenario_id}: expected tool arguments must target the scenario service")
         if scenario["expected_action"] not in VALID_ACTIONS:
             raise OpsBenchValidationError(f"{scenario_id}: unknown expected_action")
         if not isinstance(scenario["approval_required"], bool):

@@ -60,6 +60,8 @@ See [the architecture overview](docs/architecture.md), [phase log](docs/PHASE-LO
 
 OpsBench v1 contains 100 versioned operational scenarios across incident investigation, ambiguity, missing evidence, injected tool and retrieval failures, unsafe requests, authorization, prompt injection, approval rejection, and verification failure. Validate and repeat-load the dataset with `PYTHONPATH=backend python -m app.benchmarks.opsbench --repeat 5`; see [`backend/benchmarks/opsbench/v1/scenarios.json`](backend/benchmarks/opsbench/v1/scenarios.json) and [the Phase 18 notes](docs/interview-defense/phase-18.md). This foundation validates scenario definitions and reproducibility; it does not claim model accuracy scores.
 
+Phase 19 adds a paired prompt-only Gemini versus OpsPilot evaluator. Metric formulas and the initial measured slice are documented in [the Phase 19 notes](docs/interview-defense/phase-19.md); its JSON artifacts include raw predictions, per-case scores, latency, and model token usage.
+
 The extraction contract is a JSON array of tasks with `task`, `owner`, `deadline`, and a `priority` enum. Gemini is asked for schema-constrained JSON, then the complete response is validated with Pydantic before any PostgreSQL insert. Empty, malformed, or invalid responses are retried once; upstream failures try the preferred Flash model names in order and return a controlled 502/504 if they remain unavailable.
 
 ## Tech stack
