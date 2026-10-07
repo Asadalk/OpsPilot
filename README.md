@@ -84,7 +84,7 @@ python -m pip install -r requirements.txt
 python -m pytest -q
 ```
 
-The RAG tests cover production outage, security exposure, deployment verification, irrelevant queries, source attribution, and prompt context wiring. For real Gemini verification, set `GEMINI_API_KEY` in `backend/.env` and run the live API flow described in `docs/resume-claim-verification.md`.
+The RAG tests cover production outage, security exposure, deployment verification, irrelevant queries, source attribution, and prompt context wiring. For real Gemini verification, set `GEMINI_API_KEY` in `backend/.env` and run the live API flow using the commands in this README.
 
 Frontend type check and production build:
 
