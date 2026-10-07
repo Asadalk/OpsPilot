@@ -1,0 +1,199 @@
+{
+  "study": "OpsPilot Phase 20 deterministic component ablations",
+  "created_at": "2026-10-07T17:49:12.264728+00:00",
+  "model_calls": 0,
+  "model_key_status": "not_used",
+  "limitations": [
+    "These are component-level controlled checks, not end-to-end LLM quality ablations.",
+    "Tool planning uses a fixed scripted read plan; measured evidence retrieval is not model planning accuracy.",
+    "Grounding and diagnosis quality are not estimated by these component checks.",
+    "The verification comparator explicitly represents a naive mark-resolved-on-ack control.",
+    "The no-policy comparator is fail-open (allow all writes), used to quantify the policy guard boundary."
+  ],
+  "comparisons": [
+    {
+      "component": "RAG",
+      "experiment": "20 fixed questions with labeled source",
+      "scenario_count": 20,
+      "configuration": {
+        "without": "retrieval disabled",
+        "with": "hybrid PostgreSQL/pgvector and keyword retrieval"
+      },
+      "metric": [
+        "source_recall_at_3",
+        "source_accuracy_at_1",
+        "queries_returning_documents"
+      ],
+      "result": {
+        "without": {
+          "source_recall_at_3": 0.0,
+          "source_accuracy_at_1": 0.0,
+          "queries_returning_documents": 0
+        },
+        "with": {
+          "source_recall_at_3": 1.0,
+          "source_accuracy_at_1": 0.85,
+          "queries_returning_documents": 20
+        }
+      },
+      "difference": {
+        "source_recall_at_3": 1.0,
+        "source_accuracy_at_1": 0.85,
+        "queries_returning_documents": 20
+      },
+      "interpretation": "RAG changes the measured source retrieval rate; this does not establish diagnosis or resolution quality."
+    },
+    {
+      "component": "Tool planning",
+      "experiment": "5 named services; fixed five-read-tool plan",
+      "scenario_count": 5,
+      "configuration": {
+        "without": "diagnose immediately; no tool calls",
+        "with": "scripted deterministic read-tool sequence"
+      },
+      "metric": [
+        "read_tool_calls",
+        "nonempty_observations",
+        "evidence_dimensions_queried"
+      ],
+      "result": {
+        "without": {
+          "read_tool_calls": 0,
+          "nonempty_observations": 0,
+          "evidence_dimensions_queried": 0
+        },
+        "with": {
+          "read_tool_calls": 25,
+          "nonempty_observations": 22,
+          "evidence_dimensions_queried": 5
+        }
+      },
+      "difference": {
+        "read_tool_calls": 25,
+        "nonempty_observations": 22,
+        "evidence_dimensions_queried": 5
+      },
+      "interpretation": "The scripted plan adds observable read evidence at the cost of additional calls; it does not measure model tool-choice accuracy."
+    },
+    {
+      "component": "Incident history",
+      "experiment": "same five services as the tool-plan study",
+      "scenario_count": 5,
+      "configuration": {
+        "without": "get_incident_history disabled",
+        "with": "get_incident_history called once per service"
+      },
+      "metric": [
+        "history_calls",
+        "incident_records_observed"
+      ],
+      "result": {
+        "without": {
+          "history_calls": 0,
+          "incident_records_observed": 0
+        },
+        "with": {
+          "history_calls": 5,
+          "incident_records_observed": 5
+        }
+      },
+      "difference": {
+        "history_calls": 5,
+        "incident_records_observed": 5
+      },
+      "interpretation": "History supplies existing incident records for these services; this measures evidence availability, not causal diagnosis."
+    },
+    {
+      "component": "Verification",
+      "experiment": "same healthy service state with no metrics and one simulated restart",
+      "scenario_count": 1,
+      "configuration": {
+        "without": "mark resolved when simulator reports applied=true",
+        "with": "require SUCCESS verification to resolve"
+      },
+      "metric": [
+        "resolved_claims_without_success_verification",
+        "verification_status"
+      ],
+      "result": {
+        "without": {
+          "resolved_claims_without_success_verification": 1
+        },
+        "with": {
+          "resolved_claims_without_success_verification": 0,
+          "verification_status": "INCONCLUSIVE"
+        }
+      },
+      "difference": {
+        "resolved_claims_without_success_verification": -1
+      },
+      "interpretation": "For this no-change fixture, execution acknowledgement alone would look successful; post-action verification returned INCONCLUSIVE and did not resolve an incident."
+    },
+    {
+      "component": "Policy engine",
+      "experiment": "6 role/action pairs in production",
+      "scenario_count": 6,
+      "configuration": {
+        "without": "policy disabled; all writes allowed",
+        "with": "server PolicyEngine with role and canonical risk"
+      },
+      "metric": [
+        "unsafe_writes_allowed",
+        "denied_or_approval_gated",
+        "decisions"
+      ],
+      "result": {
+        "without": {
+          "proposed_writes_allowed_without_policy": 6,
+          "unsafe_writes_allowed": 5
+        },
+        "with": {
+          "unsafe_writes_allowed": 0,
+          "denied_or_approval_gated": 5,
+          "decisions": [
+            {
+              "role": "viewer",
+              "action": "restart_service",
+              "policy_outcome": "deny",
+              "canonical_risk": "HIGH"
+            },
+            {
+              "role": "viewer",
+              "action": "delete_data",
+              "policy_outcome": "deny",
+              "canonical_risk": "CRITICAL"
+            },
+            {
+              "role": "operator",
+              "action": "restart_service",
+              "policy_outcome": "require_approval",
+              "canonical_risk": "HIGH"
+            },
+            {
+              "role": "operator",
+              "action": "delete_data",
+              "policy_outcome": "require_approval",
+              "canonical_risk": "CRITICAL"
+            },
+            {
+              "role": "admin",
+              "action": "restart_service",
+              "policy_outcome": "allow",
+              "canonical_risk": "HIGH"
+            },
+            {
+              "role": "admin",
+              "action": "delete_data",
+              "policy_outcome": "require_approval",
+              "canonical_risk": "CRITICAL"
+            }
+          ]
+        }
+      },
+      "difference": {
+        "unsafe_writes_allowed": -5
+      },
+      "interpretation": "The fail-open control would allow all six proposals, including five that policy denies or gates. The engine enforces role and canonical action risk; admin restart remains allowed by configured policy."
+    }
+  ]
+}
