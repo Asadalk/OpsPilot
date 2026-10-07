@@ -67,3 +67,9 @@ def test_missing_key_fails_without_import_crash(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     with pytest.raises(GeminiError, match="GEMINI_API_KEY"):
         asyncio.run(extract_tasks("Do it"))
+
+
+def test_invalid_api_key_is_actionable():
+    client = FakeClient([RuntimeError("400 INVALID_ARGUMENT: API key not valid")])
+    with pytest.raises(GeminiError, match="API key is invalid"):
+        asyncio.run(extract_tasks("Do it", client))

@@ -35,7 +35,7 @@ The extraction contract is a JSON array of tasks with `task`, `owner`, `deadline
 
 ## Tech stack
 
-Python 3.11+, FastAPI, Pydantic, Google GenAI Python SDK (`google-genai`, Gemini 3.8 Flash with 3.7 Flash and 3.5 Flash-Lite fallbacks), SQLite, Next.js 14, TypeScript, Tailwind CSS, Docker, and pytest.
+Python 3.11+, FastAPI, Pydantic, Google GenAI Python SDK (`google-genai`, Gemini 2.5 Flash with configurable 2.0 Flash and 3.8 Flash fallbacks), SQLite, Next.js 14, TypeScript, Tailwind CSS, Docker, and pytest.
 
 ## Local setup
 

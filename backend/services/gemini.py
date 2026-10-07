@@ -6,8 +6,8 @@ from typing import Any
 from models import ExtractedTask
 from services.rag import GuidelineChunk, build_context
 
-DEFAULT_MODEL = "gemini-3.8-flash"
-MODEL_PREFERENCES = ["gemini-3.8-flash", "gemini-3.7-flash", "gemini-3.5-flash-lite"]
+DEFAULT_MODEL = "gemini-2.5-flash"
+MODEL_PREFERENCES = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-3.8-flash"]
 RESPONSE_SCHEMA = {
     "type": "ARRAY",
     "items": {
@@ -55,6 +55,17 @@ def _config() -> dict[str, Any]:
     }
 
 
+def _model_preferences() -> list[str]:
+    primary = os.getenv("GEMINI_MODEL", DEFAULT_MODEL).strip() or DEFAULT_MODEL
+    configured_fallbacks = os.getenv("GEMINI_FALLBACK_MODELS", "").split(",")
+    fallbacks = (
+        configured_fallbacks
+        if any(model.strip() for model in configured_fallbacks)
+        else MODEL_PREFERENCES
+    )
+    return list(dict.fromkeys([primary, *(model.strip() for model in fallbacks if model.strip())]))
+
+
 def _parse_tasks(raw: str) -> list[dict[str, Any]]:
     if not raw or not raw.strip():
         raise ValueError("Gemini returned an empty response")
@@ -85,7 +96,7 @@ async def extract_tasks(
         "supported by the operational input; do not invent details."
     )
     api_error: Exception | None = None
-    for model in MODEL_PREFERENCES:
+    for model in _model_preferences():
         for attempt in range(2):
             try:
                 response = await active_client.aio.models.generate_content(
@@ -94,6 +105,9 @@ async def extract_tasks(
                     config=_config(),
                 )
             except Exception as exc:
+                error_text = str(exc).lower()
+                if "api key" in error_text and ("400" in error_text or "invalid" in error_text):
+                    raise GeminiError("Gemini API key is invalid. Update GEMINI_API_KEY in backend/.env.") from exc
                 api_error = exc
                 break  # Try the next preferred Flash model.
             try:
