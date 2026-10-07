@@ -7,6 +7,7 @@ from psycopg.types.json import Jsonb
 from typing import Any, Callable, Literal
 from app.audit.repository import append_audit_event
 from app.actions.schemas import ActionProposal
+from app.actions.idempotency import action_idempotency_key
 from app.approval.schemas import ApprovalRecord
 from app.db.database import get_connection
 
@@ -35,7 +36,7 @@ class ApprovalRepository:
             with get_connection(self.database_url) as connection:
                 connection.execute("SELECT run_id FROM agent_runs WHERE run_id = %s FOR UPDATE", (run_id,))
                 existing = connection.execute(
-                    "SELECT approvals.*, actions.proposal, actions.result AS execution_result "
+                    "SELECT approvals.*, actions.proposal, actions.idempotency_key, actions.result AS execution_result "
                     "FROM approvals JOIN actions ON actions.action_id = approvals.action_id "
                     "WHERE approvals.run_id = %s", (run_id,)
                 ).fetchone()
@@ -45,8 +46,8 @@ class ApprovalRepository:
                         raise ApprovalConflict("This run already has a different approval request")
                     return self._record(existing, existing_proposal, existing["execution_result"])
                 connection.execute(
-                    "INSERT INTO actions (action_id, run_id, proposal, status) VALUES (%s, %s, %s, %s)",
-                    (action_id, run_id, Jsonb(proposal.model_dump(mode="json")), "pending_approval"),
+                    "INSERT INTO actions (action_id, run_id, proposal, idempotency_key, status) VALUES (%s, %s, %s, %s, %s)",
+                    (action_id, run_id, Jsonb(proposal.model_dump(mode="json")), action_idempotency_key(run_id, proposal), "pending_approval"),
                 )
                 row = connection.execute(
                     "INSERT INTO approvals (run_id, action_id, expires_at, decision) VALUES (%s, %s, %s, %s) RETURNING *",
@@ -69,7 +70,7 @@ class ApprovalRepository:
         try:
             with get_connection(self.database_url) as connection:
                 row = connection.execute(
-                    "SELECT approvals.*, actions.proposal, actions.result AS execution_result "
+                    "SELECT approvals.*, actions.proposal, actions.idempotency_key, actions.result AS execution_result "
                     "FROM approvals JOIN actions ON actions.action_id = approvals.action_id WHERE approvals.id = %s",
                     (approval_id,),
                 ).fetchone()
@@ -115,7 +116,7 @@ class ApprovalRepository:
                                        reason="Approval expired; action was not executed.", result={"status": "completed"},
                                        details={"approval_id": expired_row["id"]})
                 rows = connection.execute(
-                    "SELECT approvals.*, actions.proposal, actions.result AS execution_result "
+                    "SELECT approvals.*, actions.proposal, actions.idempotency_key, actions.result AS execution_result "
                     "FROM approvals JOIN actions ON actions.action_id = approvals.action_id "
                     "WHERE approvals.decision = 'pending' ORDER BY approvals.requested_at"
                 ).fetchall()
@@ -133,7 +134,7 @@ class ApprovalRepository:
                 ).fetchone()
                 if row is None:
                     full = connection.execute(
-                        "SELECT approvals.*, actions.proposal, actions.result AS execution_result FROM approvals "
+                        "SELECT approvals.*, actions.proposal, actions.idempotency_key, actions.result AS execution_result FROM approvals "
                         "JOIN actions ON actions.action_id = approvals.action_id WHERE approvals.id = %s", (approval_id,)
                     ).fetchone()
                 else:
@@ -151,7 +152,7 @@ class ApprovalRepository:
                                        reason="Approval expired; action was not executed.", result={"status": "completed"},
                                        details={"approval_id": approval_id})
                     full = connection.execute(
-                        "SELECT approvals.*, actions.proposal, actions.result AS execution_result FROM approvals "
+                        "SELECT approvals.*, actions.proposal, actions.idempotency_key, actions.result AS execution_result FROM approvals "
                         "JOIN actions ON actions.action_id = approvals.action_id WHERE approvals.id = %s", (approval_id,)
                     ).fetchone()
             return self._record(full, ActionProposal.model_validate(full["proposal"]), full["execution_result"])
@@ -170,7 +171,7 @@ class ApprovalRepository:
         try:
             with get_connection(self.database_url) as connection:
                 row = connection.execute(
-                    "SELECT approvals.*, actions.proposal, actions.result AS execution_result "
+                    "SELECT approvals.*, actions.proposal, actions.idempotency_key, actions.result AS execution_result "
                     "FROM approvals JOIN actions ON actions.action_id = approvals.action_id "
                     "WHERE approvals.id = %s FOR UPDATE",
                     (approval_id,),
@@ -178,6 +179,16 @@ class ApprovalRepository:
                 if row is None:
                     raise ApprovalNotFound
                 if row["decision"] != "pending":
+                    proposal = ActionProposal.model_validate(row["proposal"])
+                    expected_key = action_idempotency_key(row["run_id"], proposal)
+                    if (decision == "approved" and row["decision"] == "approved"
+                            and row["idempotency_key"] == expected_key
+                            and row["decided_by"] == username and row["reason"] == reason
+                            and row["execution_result"] is not None):
+                        # The original response may have been lost after commit. Replay
+                        # the durable result without applying the simulator action again.
+                        replay = self._record(row, proposal, row["execution_result"])
+                        return replay
                     raise ApprovalConflict(f"Approval already decided: {row['decision']}")
                 if row["expires_at"] <= now:
                     connection.execute("UPDATE approvals SET decision = 'expired', decided_at = %s, reason = 'Approval expired before a human decision.' WHERE id = %s", (now, approval_id))
@@ -256,7 +267,8 @@ class ApprovalRepository:
     @staticmethod
     def _record(row: dict, proposal: ActionProposal, execution_result: dict | None) -> ApprovalRecord:
         return ApprovalRecord(
-            id=row["id"], run_id=row["run_id"], action_id=row["action_id"], requested_at=row["requested_at"],
+            id=row["id"], run_id=row["run_id"], action_id=row["action_id"],
+            idempotency_key=row["idempotency_key"], requested_at=row["requested_at"],
             expires_at=row["expires_at"], decided_at=row.get("decided_at"), decision=row["decision"],
             decided_by=row.get("decided_by"), reason=row.get("reason"), proposal=proposal,
             execution_result=execution_result,

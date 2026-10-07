@@ -106,16 +106,37 @@ def test_high_risk_action_pauses_then_approves_and_executes(database_path):
     assert paused_run == {"status": "paused", "completed_at": None}
     repeated = agent.approval_service.repository.create_pending(state.run_id, state.proposed_action)
     assert repeated.id == state.approval.id
+    assert repeated.idempotency_key == state.approval.idempotency_key
 
     approved = agent.approval_service.decide(state.approval.id, "approved", operator, "Incident review approved")
     assert approved.decision == "approved"
     assert approved.execution_result["status"] == "simulated"
+
+    # Model a lost HTTP response: the approval committed, but the client retries
+    # the same request and must receive the persisted result without another write.
+    with get_connection(database_path) as connection:
+        side_effect_count_before_retry = connection.execute(
+            "SELECT COUNT(*) AS count FROM logs WHERE message = 'Simulated restart completed.'"
+        ).fetchone()["count"]
+    retried = agent.approval_service.decide(state.approval.id, "approved", operator, "Incident review approved")
+    assert retried.execution_result == approved.execution_result
+    assert retried.action_id == approved.action_id
 
     with get_connection(database_path) as connection:
         action = connection.execute("SELECT status FROM actions WHERE action_id = %s", (approved.action_id,)).fetchone()
         run = connection.execute("SELECT status FROM agent_runs WHERE run_id = %s", (state.run_id,)).fetchone()
     assert action["status"] == "executed"
     assert run["status"] == "completed"
+    assert action["idempotency_key"] == approved.idempotency_key
+    with get_connection(database_path) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) AS count FROM logs WHERE message = 'Simulated restart completed.'"
+        ).fetchone()["count"] == side_effect_count_before_retry
+        assert connection.execute("SELECT COUNT(*) AS count FROM actions WHERE run_id = %s", (state.run_id,)).fetchone()["count"] == 1
+        assert connection.execute(
+            "SELECT COUNT(*) AS count FROM audit_events WHERE run_id = %s AND event_type = 'action.executed'",
+            (state.run_id,),
+        ).fetchone()["count"] == 1
     from app.audit.repository import AuditRepository
     with get_connection(database_path) as connection:
         incident = connection.execute("SELECT id FROM incidents WHERE title='Payments latency spike'").fetchone()
@@ -132,7 +153,7 @@ def test_high_risk_action_pauses_then_approves_and_executes(database_path):
     assert "incident.resolved" in event_types
 
     with pytest.raises(ApprovalConflict):
-        agent.approval_service.decide(state.approval.id, "approved", operator, "duplicate")
+        agent.approval_service.decide(state.approval.id, "rejected", operator, "Conflicting retry")
 
 
 def test_reject_and_unauthorized_approval(database_path):

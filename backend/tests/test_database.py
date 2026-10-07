@@ -34,6 +34,7 @@ def test_initial_migration_is_recorded(database_path):
         "009_policy_decisions.sql",
         "010_human_approvals.sql",
         "011_audit_events.sql",
+        "012_action_idempotency.sql",
     }
 
 

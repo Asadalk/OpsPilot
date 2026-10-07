@@ -13,6 +13,7 @@ class ApprovalRecord(BaseModel):
     id: int
     run_id: UUID
     action_id: UUID
+    idempotency_key: str
     requested_at: datetime
     expires_at: datetime
     decided_at: datetime | None
