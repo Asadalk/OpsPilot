@@ -1,36 +1,25 @@
-import sqlite3
 from pathlib import Path
+
+import psycopg
+from psycopg.rows import dict_row
 
 from app.core.config import settings
 
-
-def sqlite_path(database_url: str = settings.database_url) -> Path:
-    if not database_url.startswith("sqlite:///"):
-        raise ValueError("Only SQLite DATABASE_URL values are supported")
-    return Path(database_url.removeprefix("sqlite:///"))
+MIGRATIONS_DIR = Path(__file__).resolve().parents[2] / "migrations"
 
 
-def get_connection(database_url: str = settings.database_url) -> sqlite3.Connection:
-    path = sqlite_path(database_url).resolve()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(path)
-    connection.row_factory = sqlite3.Row
-    return connection
+def get_connection(database_url: str = settings.database_url) -> psycopg.Connection:
+    return psycopg.connect(database_url, row_factory=dict_row)
 
 
 def init_db(database_url: str = settings.database_url) -> None:
     with get_connection(database_url) as connection:
         connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS tasks (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                task TEXT NOT NULL,
-                owner TEXT NOT NULL,
-                deadline TEXT NOT NULL,
-                priority TEXT NOT NULL CHECK (priority IN ('high', 'medium', 'low')),
-                status TEXT NOT NULL CHECK (status IN ('todo', 'in_progress', 'done')),
-                created_at TEXT NOT NULL
-            )
-            """
+            "CREATE TABLE IF NOT EXISTS schema_migrations (version TEXT PRIMARY KEY, applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW())"
         )
-        connection.commit()
+        applied = {row["version"] for row in connection.execute("SELECT version FROM schema_migrations")}
+        for migration in sorted(MIGRATIONS_DIR.glob("*.sql")):
+            if migration.name in applied:
+                continue
+            connection.execute(migration.read_text(encoding="utf-8"))
+            connection.execute("INSERT INTO schema_migrations (version) VALUES (%s)", (migration.name,))

@@ -7,7 +7,7 @@ Ops Assistant turns unstructured operational text—meeting notes, emails, and t
 - Gemini task extraction with schema-constrained JSON output
 - Lightweight local RAG over example operational guidelines
 - Pydantic validation of every extracted task before database writes
-- SQLite persistence
+- PostgreSQL persistence through Docker Compose
 - Kanban board with status updates and task deletion
 - Clear API and UI handling for validation, database, and Gemini failures
 - One retry for malformed model output and Flash model fallback after upstream API errors
@@ -22,7 +22,7 @@ flowchart TD
   API --> RAG[Local guideline retrieval]
   RAG --> Gemini[Google Gemini API]
   Gemini --> Validate[Pydantic validation]
-  Validate --> DB[(SQLite)]
+  Validate --> DB[(PostgreSQL)]
 ```
 
 The Gemini key is read by FastAPI from the backend environment. The browser only calls FastAPI.
@@ -31,15 +31,15 @@ The Gemini key is read by FastAPI from the backend environment. The browser only
 
 The checked-in `backend/guidelines/operational-guidelines.md` file is explicitly an example demo knowledge base, not production policy. The backend loads its paragraphs as chunks, normalizes tokens, calculates IDF-weighted lexical overlap, and sends the top relevant chunks (with source, chunk ID, and relevance score) to Gemini before extraction. Queries with no meaningful overlap receive no guideline context. This keeps retrieval local and explainable without an external vector database.
 
-The extraction contract is a JSON array of tasks with `task`, `owner`, `deadline`, and a `priority` enum. Gemini is asked for schema-constrained JSON, then the complete response is validated with Pydantic before any SQLite insert. Empty, malformed, or invalid responses are retried once; upstream failures try the preferred Flash model names in order and return a controlled 502/504 if they remain unavailable.
+The extraction contract is a JSON array of tasks with `task`, `owner`, `deadline`, and a `priority` enum. Gemini is asked for schema-constrained JSON, then the complete response is validated with Pydantic before any PostgreSQL insert. Empty, malformed, or invalid responses are retried once; upstream failures try the preferred Flash model names in order and return a controlled 502/504 if they remain unavailable.
 
 ## Tech stack
 
-Python 3.11+, FastAPI, Pydantic, Google GenAI Python SDK (`google-genai`, Gemini 2.5 Flash with configurable 2.0 Flash and 3.8 Flash fallbacks), SQLite, Next.js 14, TypeScript, Tailwind CSS, Docker, and pytest.
+Python 3.11+, FastAPI, Pydantic, Google GenAI Python SDK (`google-genai`, Gemini 2.5 Flash with configurable 2.0 Flash and 3.8 Flash fallbacks), psycopg, PostgreSQL, Next.js 14, TypeScript, Tailwind CSS, Docker, and pytest.
 
 ## Local setup
 
-Requirements: Python 3.11+, Node.js 20+, npm, and a Gemini API key for extraction.
+Requirements: Python 3.11+, Node.js 20+, npm, Docker Compose, and a Gemini API key for extraction.
 
 Backend (from the repository root):
 
@@ -71,13 +71,14 @@ cp backend/.env.example backend/.env
 docker compose up --build
 ```
 
-Open http://localhost:3000. API and health URLs are http://localhost:8000 and http://localhost:8000/health. SQLite is stored inside the backend container for this local MVP. Stop with `docker compose down`.
+Open http://localhost:3000. API and health URLs are http://localhost:8000 and http://localhost:8000/health. PostgreSQL data is stored in the named `postgres_data` volume. Stop with `docker compose down`; the volume remains for the next start.
 
 ## Tests and checks
 
-Run backend tests offline (Gemini is mocked for deterministic failure-path tests):
+Run backend tests against the Compose PostgreSQL service (Gemini is mocked for deterministic failure-path tests):
 
 ```bash
+docker compose up -d postgres
 cd backend
 .venv/bin/python -m pip install -r requirements.txt
 .venv/bin/python -m pytest -q
@@ -107,8 +108,8 @@ npm run build
 
 ## Design decisions
 
-- **Validate model output:** schema-constrained generation improves shape consistency, and Pydantic validates the complete response before any task is inserted. This protects SQLite from malformed or incomplete model output.
-- **Use SQLite:** a local file is simple to run and sufficient for a single-user portfolio MVP; it avoids an extra database service.
+- **Validate model output:** schema-constrained generation improves shape consistency, and Pydantic validates the complete response before any task is inserted. This protects PostgreSQL from malformed or incomplete model output.
+- **Use PostgreSQL:** one named-volume database supports the multi-entity direction without retaining a hidden second persistence system.
 - **Keep Gemini on the backend:** the API key stays out of browser code and frontend configuration.
 - **Prefer structured output:** JSON schema gives the model a specific task shape and priority enum instead of relying on arbitrary prose parsing.
 - **Retry and fallback:** malformed output gets one stricter retry. Transient model/API errors try alternate Flash model names before returning an upstream error.
@@ -116,7 +117,7 @@ npm run build
 
 ## Limitations
 
-This is a single-user application with no authentication or user accounts. SQLite is not intended for large concurrent deployments. Model extraction can still make semantic mistakes, so users should review tasks before acting on them. The guideline file is illustrative and must be reviewed before use in a real organization. The local Docker setup does not configure persistent database volumes.
+This is a single-user application with no authentication or user accounts. PostgreSQL is local-only in this phase. Model extraction can still make semantic mistakes, so users should review tasks before acting on them. The guideline file is illustrative and must be reviewed before use in a real organization.
 
 ## Project layout
 
@@ -125,6 +126,7 @@ backend/
   main.py
   models.py
   database.py
+  migrations/
   routes/tasks.py
   services/gemini.py
   services/task_service.py

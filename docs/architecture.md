@@ -19,7 +19,7 @@ backend/app/main.py (FastAPI application)
     +-- app/db/repositories.py
     |       owns task persistence operations
     +-- app/db/database.py
-    |       owns SQLite connections and schema initialization
+    |       owns PostgreSQL connections and migration application
     +-- app/models/schemas.py
     |       owns Pydantic request, model-output, and response schemas
     +-- app/core/config.py
@@ -31,6 +31,8 @@ backend/app/main.py (FastAPI application)
 ## Request flow
 
 `POST /extract` validates the request, retrieves relevant guideline chunks, asks Gemini for structured output, validates every extracted task, calls the task service, and persists through the repository. `GET`, `PATCH`, and `DELETE /tasks` use the same service and repository path. Routes do not issue SQL.
+
+PostgreSQL is the sole persistence system.
 
 ## Future additions
 

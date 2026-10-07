@@ -19,7 +19,7 @@ def _parse_timeout(value: str) -> int:
 class Settings:
     database_url: str = os.getenv(
         "DATABASE_URL",
-        f"sqlite:///{Path(os.getenv('TASKS_DB_PATH', BACKEND_ROOT / 'tasks.db')).resolve()}",
+        "postgresql://opspilot:opspilot@localhost:5433/opspilot",
     )
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     gemini_timeout_seconds: int = _parse_timeout(os.getenv("GEMINI_TIMEOUT_SECONDS", "25"))

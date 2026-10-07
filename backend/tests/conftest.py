@@ -1,4 +1,5 @@
 import asyncio
+import os
 import sys
 from pathlib import Path
 
@@ -8,15 +9,17 @@ import pytest
 BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND))
 
-from app.db.database import init_db
+from app.db.database import get_connection, init_db
 from app.main import app, task_service
 
 
 @pytest.fixture
 def api(tmp_path, monkeypatch):
-    database_url = f"sqlite:///{tmp_path / 'test.db'}"
+    database_url = os.getenv("TEST_DATABASE_URL", "postgresql://opspilot:opspilot@localhost:5433/opspilot")
     monkeypatch.setattr(task_service.repository, "database_url", database_url)
     init_db(database_url)
+    with get_connection(database_url) as connection:
+        connection.execute("TRUNCATE tasks RESTART IDENTITY")
 
     async def send(method, url, **kwargs):
         transport = httpx.ASGITransport(app=app)
@@ -30,5 +33,5 @@ def api(tmp_path, monkeypatch):
 
 
 @pytest.fixture
-def database_path(tmp_path, monkeypatch):
-    return f"sqlite:///{tmp_path / 'db_ops.sqlite'}"
+def database_path():
+    return os.getenv("TEST_DATABASE_URL", "postgresql://opspilot:opspilot@localhost:5433/opspilot")
