@@ -27,13 +27,21 @@ class KnowledgeCitation(BaseModel):
     content: str
 
 
+class Hypothesis(BaseModel):
+    hypothesis: str = Field(..., min_length=1)
+    score: float = Field(..., ge=0.0, le=1.0, description="Model-assigned hypothesis score; not a calibrated probability.")
+    supporting_evidence: list[dict[str, Any]] = Field(default_factory=list)
+    contradicting_evidence: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class AgentState(BaseModel):
     run_id: UUID
     user_request: str
     service: str | None = None
     severity: str | None = None
     evidence: list[dict[str, Any]] = Field(default_factory=list)
-    hypotheses: list[str] = Field(default_factory=list)
+    hypotheses: list[Hypothesis] = Field(default_factory=list)
+    hypothesis_history: list[list[Hypothesis]] = Field(default_factory=list)
     tool_calls: list[AgentToolCall] = Field(default_factory=list)
     tool_results: list[dict[str, Any]] = Field(default_factory=list)
     knowledge: list[KnowledgeCitation] = Field(default_factory=list)
@@ -48,7 +56,7 @@ class AgentDecision(BaseModel):
     arguments: dict[str, Any] = Field(default_factory=dict)
     service: str | None = None
     severity: str | None = None
-    hypotheses: list[str] = Field(default_factory=list)
+    hypotheses: list[Hypothesis] = Field(default_factory=list)
     diagnosis: str | None = None
     proposed_action: str | None = None
 

@@ -34,6 +34,8 @@ Phase 6 adds `app/tools`: `Tool` defines typed input/result schemas and explicit
 Phase 7 adds one direct `OpsAgent` loop. `GeminiDecisionProvider` chooses a registered tool or a final diagnosis, `OpsAgent` executes the selected read-only tool, and `agent_runs` plus `agent_tool_calls` store the request, evidence, timing, arguments, results, failures, and diagnosis. No write-capable tool is registered.
 
 Phase 8 adds `knowledge_documents` and `knowledge_chunks` with pgvector embeddings. `app/rag/ingest.py` cleans and chunks Markdown, creates fixed 128-dimensional hashed-token embeddings, and stores them in PostgreSQL. Exact cosine similarity retrieves bounded chunks with provenance. The agent performs an initial retrieval and persists citations; knowledge supports runtime evidence and cannot authorize actions.
+
+Phase 10 makes diagnosis explicit: each decision can replace multiple typed hypotheses, each with a model-assigned score and supporting/contradicting evidence. `hypothesis_history` preserves comparisons across tool calls so a later diagnosis can be inspected rather than inferred from an opaque answer.
 ```
 
 `backend/main.py`, `backend/models.py`, `backend/database.py`, and the old service and route paths are compatibility shims. The container starts `app.main:app` directly.

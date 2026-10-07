@@ -39,7 +39,9 @@ class OpsAgent:
                 decision = await self.provider.decide(state, descriptions)
                 state.service = decision.service or state.service
                 state.severity = decision.severity or state.severity
-                state.hypotheses = decision.hypotheses or state.hypotheses
+                if decision.hypotheses:
+                    state.hypotheses = decision.hypotheses
+                    state.hypothesis_history.append(decision.hypotheses)
                 if decision.action == "diagnose":
                     state.diagnosis = self._cite_knowledge(decision.diagnosis, state)
                     state.proposed_action = decision.proposed_action
@@ -104,7 +106,8 @@ class OpsAgent:
             state.service,
             state.severity,
             state.evidence,
-            state.hypotheses,
+            [hypothesis.model_dump(mode="json") for hypothesis in state.hypotheses],
+            [[hypothesis.model_dump(mode="json") for hypothesis in hypotheses] for hypotheses in state.hypothesis_history],
             [citation.model_dump(mode="json") for citation in state.knowledge],
             state.diagnosis,
             state.proposed_action,

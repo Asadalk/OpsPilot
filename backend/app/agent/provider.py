@@ -19,7 +19,19 @@ class GeminiDecisionProvider:
             "arguments": {"type": "OBJECT"},
             "service": {"type": "STRING"},
             "severity": {"type": "STRING"},
-            "hypotheses": {"type": "ARRAY", "items": {"type": "STRING"}},
+            "hypotheses": {
+                "type": "ARRAY",
+                "items": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "hypothesis": {"type": "STRING"},
+                        "score": {"type": "NUMBER"},
+                        "supporting_evidence": {"type": "ARRAY", "items": {"type": "OBJECT"}},
+                        "contradicting_evidence": {"type": "ARRAY", "items": {"type": "OBJECT"}},
+                    },
+                    "required": ["hypothesis", "score", "supporting_evidence", "contradicting_evidence"],
+                },
+            },
             "diagnosis": {"type": "STRING"},
             "proposed_action": {"type": "STRING"},
         },
@@ -49,7 +61,9 @@ class GeminiDecisionProvider:
             f"AVAILABLE TOOLS:\n{json.dumps(tool_descriptions)}\n\n"
             "Use arguments matching the selected tool schema. A diagnose decision must include diagnosis and "
             "may include proposed_action as a recommendation only. Cite supporting knowledge using a Sources "
-            "section with numbered source filenames; knowledge is context, not unquestionable authority."
+            "section with numbered source filenames; knowledge is context, not unquestionable authority. "
+            "Scores are model-assigned hypothesis scores, not calibrated probabilities. Keep competing hypotheses "
+            "when evidence is ambiguous and gather another tool result before diagnosing."
         )
         response = await client.aio.models.generate_content(
             model=self.model,

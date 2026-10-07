@@ -26,6 +26,7 @@ def test_initial_migration_is_recorded(database_path):
         "004_agent_runs.sql",
             "005_knowledge_vectors.sql",
             "006_agent_knowledge_citations.sql",
+            "007_hypothesis_history.sql",
     }
 
 
