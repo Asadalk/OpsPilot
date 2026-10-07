@@ -98,7 +98,7 @@ class SearchRunbooks(Tool[RunbookSearchInput, RunbookSearchResult]):
 
     def execute(self, parameters: RunbookSearchInput) -> RunbookSearchResult:
         try:
-            matches = self.repository.search(parameters.query, top_k=3)
+            matches = self.repository.search(parameters.query, top_k=3, mode=parameters.mode)
         except KnowledgeRepositoryError as exc:
             raise ToolExecutionError("Knowledge database unavailable") from exc
         return self.result_schema(

@@ -26,6 +26,7 @@ class LogsToolInput(BoundedServiceToolInput):
 class RunbookSearchInput(BaseModel):
     query: str = Field(..., min_length=1)
     service: str | None = None
+    mode: Literal["semantic", "keyword", "hybrid"] = "hybrid"
 
 
 class HealthToolResult(ServiceHealth):
@@ -58,6 +59,9 @@ class RunbookMatch(BaseModel):
     chunk: int
     similarity: float
     content: str
+    retrieval_mode: Literal["semantic", "keyword", "hybrid"] | None = None
+    semantic_similarity: float | None = None
+    keyword_score: float | None = None
 
 
 class RunbookSearchResult(BaseModel):

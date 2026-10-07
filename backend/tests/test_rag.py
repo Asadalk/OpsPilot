@@ -67,9 +67,40 @@ def test_vector_retrieval_top_k_measurement(database_path):
     top_one = 0
     top_three = 0
     for question, expected_source in QUESTIONS:
-        results = repository.search(question, top_k=3)
+        results = repository.search(question, top_k=3, mode="semantic")
         sources = [result["source"] for result in results]
         top_one += bool(sources and sources[0] == expected_source)
         top_three += expected_source in sources
     print(f"retrieval_top1={top_one}/{len(QUESTIONS)} retrieval_top3={top_three}/{len(QUESTIONS)}")
     assert top_three == len(QUESTIONS)
+
+
+HYBRID_QUESTIONS = [
+    ("PAY-442", "runbooks/payment-latency.md"),
+    ("payments-api v3.8.2", "runbooks/payment-latency.md"),
+    ("DB_TIMEOUT", "runbooks/database-timeout.md"),
+    ("ECONNRESET", "runbooks/database-timeout.md"),
+    ("PAY-451 CONFIG_MISMATCH", "postmortems/checkout-configuration-mismatch.md"),
+    ("checkout-api v3.8.2", "postmortems/checkout-configuration-mismatch.md"),
+    ("notification provider connection refused", "postmortems/notification-dependency-failure.md"),
+    ("payments-api database connection pool", "architecture/payments-dependency-boundary.md"),
+    ("what should I check for payment latency", "runbooks/payment-latency.md"),
+    ("when should a rollback be considered", "runbooks/deployment-rollback.md"),
+    ("what does degraded health mean", "runbooks/service-health.md"),
+    ("record trace id for database timeout", "runbooks/database-timeout.md"),
+]
+
+
+def test_retrieval_mode_benchmark(database_path):
+    ingest_directory(Path(__file__).resolve().parents[2] / "knowledge", database_path)
+    repository = KnowledgeRepository(database_path)
+    hits = {mode: {"top1": 0, "top3": 0} for mode in ("semantic", "keyword", "hybrid")}
+    for question, expected_source in HYBRID_QUESTIONS:
+        for mode in hits:
+            results = repository.search(question, top_k=3, mode=mode)
+            sources = [result["source"] for result in results]
+            hits[mode]["top1"] += bool(sources and sources[0] == expected_source)
+            hits[mode]["top3"] += expected_source in sources
+    print(f"retrieval_benchmark={hits}")
+    assert hits["hybrid"]["top3"] >= hits["semantic"]["top3"]
+    assert hits["hybrid"]["top3"] >= hits["keyword"]["top3"]

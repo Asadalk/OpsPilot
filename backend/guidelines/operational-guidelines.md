@@ -1,6 +1,6 @@
 # Example operational guidelines
 
-These guidelines are illustrative demo context for Ops Assistant. Adapt them to the organization before using them for real operational decisions.
+These guidelines are illustrative demo context for Ops Pilot. Adapt them to the organization before using them for real operational decisions.
 
 High-priority production incidents affecting customers should be escalated immediately, assigned an incident owner, and tracked until customer impact is resolved.
 

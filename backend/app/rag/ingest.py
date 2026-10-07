@@ -23,7 +23,7 @@ def ingest_directory(knowledge_dir: Path, database_url: str = settings.database_
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Ingest OpsPilot knowledge documents into PostgreSQL.")
+    parser = argparse.ArgumentParser(description="Ingest Ops Pilot knowledge documents into PostgreSQL.")
     parser.add_argument("--knowledge-dir", type=Path, default=Path("knowledge"))
     parser.add_argument("--database-url", default=settings.database_url)
     args = parser.parse_args()

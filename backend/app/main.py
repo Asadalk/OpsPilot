@@ -26,7 +26,7 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="Ops Assistant API", version="1.0.0", lifespan=lifespan)
+app = FastAPI(title="Ops Pilot API", version="1.0.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
@@ -38,12 +38,12 @@ app.add_middleware(
 
 @app.get("/health")
 async def health() -> dict[str, str]:
-    return {"status": "ok", "service": "ops-assistant-api"}
+    return {"status": "ok", "service": "ops-pilot-api"}
 
 
 @app.get("/")
 async def read_root() -> dict[str, str]:
-    return {"message": "Ops Assistant API is running", "health": "/health"}
+    return {"message": "Ops Pilot API is running", "health": "/health"}
 
 
 app.include_router(build_task_router(task_service))

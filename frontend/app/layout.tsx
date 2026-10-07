@@ -2,8 +2,8 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Ops Assistant",
-  description: "AI Internal Ops Assistant",
+  title: "Ops Pilot",
+  description: "AI Internal Ops Pilot",
 };
 
 export default function RootLayout({
@@ -16,7 +16,7 @@ export default function RootLayout({
       <body>
         <header className="border-b border-slate-800 bg-slatebrand-950 text-white">
           <div className="mx-auto max-w-7xl px-6 py-4 text-lg font-semibold tracking-wide">
-            Ops Assistant
+            Ops Pilot
           </div>
         </header>
         <main className="mx-auto min-h-[calc(100vh-65px)] max-w-7xl px-6 py-8">{children}</main>
