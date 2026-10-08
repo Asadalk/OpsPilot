@@ -136,3 +136,17 @@ def test_dashboard_read_apis_return_persisted_incidents_runs_and_approval_histor
     evaluation = api("GET", "/evaluation/latest")
     assert evaluation.status_code == 200
     assert evaluation.json()["comparisons"]
+
+
+def test_cors_allows_local_next_dev_port_fallback(api):
+    response = api(
+        "OPTIONS", "/agent/runs",
+        headers={
+            "Origin": "http://localhost:3001",
+            "Access-Control-Request-Method": "GET",
+            "Access-Control-Request-Headers": "authorization",
+        },
+    )
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3001"
+    assert "authorization" in response.headers["access-control-allow-headers"].lower()
