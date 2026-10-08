@@ -1,0 +1,13 @@
+"use client";
+
+import Link from "next/link";
+import { useEffect, useState } from "react";
+import { Activity, ArrowUpRight, Search } from "lucide-react";
+import { AgentRun, api, durationLabel, formatDate } from "@/lib/opspilot";
+
+export default function RunsPage() {
+  const [runs, setRuns] = useState<AgentRun[]>([]);
+  const [error, setError] = useState("");
+  useEffect(() => { api<AgentRun[]>("/agent/runs?limit=100").then(setRuns).catch((e) => setError(e.message)); }, []);
+  return <div className="space-y-6"><div><p className="eyebrow">OBSERVABILITY</p><h1 className="page-title mt-2">Agent runs</h1><p className="muted mt-2">Every row links to a timeline built from persisted backend events.</p></div>{error && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{error} · <Link className="font-semibold underline" href="/login?next=/runs">Sign in to view authorized runs</Link></div>}<div className="panel overflow-hidden"><div className="grid grid-cols-[minmax(220px,1fr)_160px_120px_100px_24px] gap-4 border-b border-slate-100 bg-slate-50/70 px-5 py-3 text-[10px] font-bold uppercase tracking-wider text-slate-400"><span>Run</span><span>Service</span><span>Status</span><span>Events</span><span /></div><div className="divide-y divide-slate-100">{runs.map((run) => { const ms = run.completed_at ? new Date(run.completed_at).getTime() - new Date(run.started_at).getTime() : null; return <Link key={run.run_id} href={`/runs/${run.run_id}`} className="grid grid-cols-[minmax(220px,1fr)_160px_120px_100px_24px] items-center gap-4 px-5 py-4 hover:bg-slate-50"><div className="flex min-w-0 items-center gap-3"><span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-blue-50 text-blue-700"><Activity size={16} /></span><div className="min-w-0"><p className="truncate text-xs font-semibold text-slate-800">{run.user_request || run.run_id}</p><p className="mt-1 text-[10px] text-slate-400">{formatDate(run.started_at)} · {ms !== null ? durationLabel(Math.max(0, ms)) : "in progress"}</p></div></div><span className="text-xs text-slate-600">{run.service ?? "Not identified"}</span><span className="w-fit rounded-full bg-slate-100 px-2.5 py-1 text-[10px] font-semibold capitalize text-slate-600">{run.status}</span><span className="text-xs text-slate-500">{run.events.length}</span><ArrowUpRight size={15} className="text-slate-400" /></Link>; })}{runs.length === 0 && !error && <div className="p-14 text-center"><Search size={22} className="mx-auto text-slate-300" /><p className="mt-3 text-sm text-slate-600">No stored runs are available.</p></div>}</div></div></div>;
+}

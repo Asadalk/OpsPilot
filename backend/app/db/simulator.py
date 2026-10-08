@@ -108,3 +108,17 @@ class SimulatorRepository:
             "FROM incidents JOIN services ON services.id = incidents.service_id "
             f"WHERE incidents.service_id = %s ORDER BY incidents.created_at DESC LIMIT {limit}",
         )
+
+    def list_incidents(self) -> list[dict]:
+        try:
+            with get_connection(self.database_url) as connection:
+                rows = connection.execute(
+                    "SELECT incidents.id, incidents.title, incidents.severity, incidents.status, incidents.service_id, "
+                    "services.name AS service, services.environment, incidents.created_at, incidents.updated_at "
+                    "FROM incidents JOIN services ON services.id = incidents.service_id "
+                    "ORDER BY CASE incidents.status WHEN 'investigating' THEN 0 WHEN 'open' THEN 1 ELSE 2 END, "
+                    "incidents.created_at DESC"
+                ).fetchall()
+            return [dict(row) for row in rows]
+        except psycopg.Error as exc:
+            raise SimulatorRepositoryError from exc

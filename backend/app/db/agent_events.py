@@ -35,7 +35,8 @@ class AgentEventRepository:
     def for_run(self, run_id: UUID, principal: UserPrincipal) -> AgentRunTrace | None:
         with get_connection(self.database_url) as connection:
             run = connection.execute(
-                "SELECT r.run_id, r.status, r.service, r.diagnosis, r.created_at AS started_at, r.completed_at "
+                "SELECT r.run_id, r.status, r.service, r.diagnosis, r.user_request, r.evidence, r.hypotheses, r.hypothesis_history, "
+                "r.knowledge_citations, r.action_proposal, r.policy_decision, r.created_at AS started_at, r.completed_at "
                 "FROM agent_runs r WHERE r.run_id = %s AND (" 
                 "%s IN ('operator', 'admin') OR EXISTS ("
                 "SELECT 1 FROM audit_events a WHERE a.run_id = r.run_id "
@@ -49,4 +50,40 @@ class AgentEventRepository:
                 "status, error, details FROM agent_events WHERE run_id = %s "
                 "ORDER BY occurred_at, event_id", (run_id,),
             ).fetchall()
-        return AgentRunTrace.model_validate({**run, "events": events})
+        return self._trace(run, events)
+
+    def list_runs(self, principal: UserPrincipal, limit: int = 100) -> list[AgentRunTrace]:
+        with get_connection(self.database_url) as connection:
+            runs = connection.execute(
+                "SELECT r.run_id, r.status, r.service, r.diagnosis, r.user_request, r.evidence, r.hypotheses, r.hypothesis_history, "
+                "r.knowledge_citations, r.action_proposal, r.policy_decision, "
+                "r.created_at AS started_at, r.completed_at FROM agent_runs r WHERE "
+                "%s IN ('operator', 'admin') OR EXISTS (SELECT 1 FROM audit_events a "
+                "WHERE a.run_id = r.run_id AND a.event_type = 'agent.started' AND a.actor = %s) "
+                "ORDER BY r.created_at DESC LIMIT %s",
+                (principal.role, principal.username, limit),
+            ).fetchall()
+            traces = []
+            for run in runs:
+                events = connection.execute(
+                    "SELECT event_id, run_id, event_type, occurred_at AS timestamp, duration_ms, model, tool, "
+                    "status, error, details FROM agent_events WHERE run_id = %s ORDER BY occurred_at, event_id",
+                    (run["run_id"],),
+                ).fetchall()
+                traces.append(self._trace(run, events))
+        return traces
+
+    @staticmethod
+    def _trace(run: dict, events: list[dict]) -> AgentRunTrace:
+        # Earlier runs could contain these two JSON columns in reversed order.
+        # Normalize only when the shape clearly identifies a citation list in history.
+        normalized = dict(run)
+        citation_values = [normalized.get("knowledge_citations") or [], normalized.get("hypothesis_history") or []]
+        valid_citations = next((value for value in citation_values
+                                if value and isinstance(value[0], dict)
+                                and ("source" in value[0] or "document" in value[0])), [])
+        valid_history = next((value for value in citation_values
+                              if value and isinstance(value[0], list)), [])
+        normalized["knowledge_citations"] = valid_citations
+        normalized["hypothesis_history"] = valid_history
+        return AgentRunTrace.model_validate({**normalized, "events": events})

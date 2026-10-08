@@ -68,7 +68,7 @@ export default function BoardPage() {
     <section>
       <div className="mb-6 flex items-center justify-between gap-4">
         <Link
-          href="/"
+          href="/tasks/new"
           className="inline-flex items-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-50"
         >
           &larr; Extract More Tasks

@@ -1,6 +1,6 @@
-# Ops Pilot
+# OpsPilot
 
-Ops Pilot turns unstructured operational text—meeting notes, emails, and task dumps—into structured, actionable tasks. Tasks are reviewed and managed on a Kanban board.
+OpsPilot is a controlled operations workspace for investigating simulator incidents, reviewing human approvals, and reconstructing agent runs from stored events. The original task extraction workflow remains available as a separate task board.
 
 ## Features
 
@@ -13,24 +13,32 @@ Ops Pilot turns unstructured operational text—meeting notes, emails, and task 
 - Clear API and UI handling for validation, database, and Gemini failures
 - One retry for malformed model output and Flash model fallback after upstream API errors
 - Docker Compose support for local runs
+- Incident dashboard with simulator health evidence and live run status
+- Persisted agent run timeline, human approval queue, and evaluation report
+- JWT sign-in with viewer, operator, and admin roles
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-  User --> Next[Next.js + TypeScript]
-  Next -->|HTTP API| API[FastAPI]
-  API --> RAG[Local guideline retrieval]
-  RAG --> Gemini[Google Gemini API]
-  Gemini --> Validate[Pydantic validation]
-  Validate --> DB[(PostgreSQL)]
+  User --> Next[Next.js OpsPilot workspace]
+  Next -->|Bearer-authenticated HTTP| API[FastAPI]
+  API --> Agent[Bounded Ops Agent]
+  Agent --> Tools[Read-only simulator tools]
+  Agent --> RAG[Hybrid knowledge retrieval]
+  Agent --> Policy[Server policy and approval]
+  Policy --> Sim[Controlled simulator actions]
+  API --> DB[(PostgreSQL + pgvector)]
+  Tools --> DB
+  RAG --> Gemini[Google Gemini]
+  Agent --> DB
 ```
 
 The Gemini key is read by FastAPI from the backend environment. The browser only calls FastAPI.
 
 ## RAG pipeline
 
-The checked-in `backend/guidelines/operational-guidelines.md` file is explicitly an example demo knowledge base, not production policy. The backend loads its paragraphs as chunks, normalizes tokens, calculates IDF-weighted lexical overlap, and sends the top relevant chunks (with source, chunk ID, and relevance score) to Gemini before extraction. Queries with no meaningful overlap receive no guideline context. This keeps retrieval local and explainable without an external vector database.
+Operational knowledge is stored under `knowledge/` and ingested into PostgreSQL + pgvector. Hybrid retrieval combines semantic and keyword matching and returns source citations with agent runs. The documents are examples for the simulator, not production policy.
 
 ## Operational domain
 
@@ -62,7 +70,9 @@ OpsBench v1 contains 100 versioned operational scenarios across incident investi
 
 Phase 19 adds a paired prompt-only Gemini versus OpsPilot evaluator. Metric formulas and the initial measured slice are documented in [the Phase 19 notes](docs/interview-defense/phase-19.md); its JSON artifacts include raw predictions, per-case scores, latency, and model token usage.
 
-Agent runs also expose their actual persisted lifecycle through authenticated `GET /agent/runs/{run_id}/events`. The ordered PostgreSQL trace includes model decisions, retrieval, tool calls, policy, approval, simulated execution, verification, and run status, with durations when measurable. Viewers can read only runs they initiated; operators and admins can inspect runs. See [Phase 22 notes](docs/interview-defense/phase-22.md).
+Agent runs expose their actual persisted lifecycle through authenticated `GET /agent/runs` and `GET /agent/runs/{run_id}/events`. The ordered PostgreSQL trace includes model decisions, retrieval, tool calls, policy, approval, simulated execution, verification, and run status, with durations when measurable. Viewers can read only runs they initiated; operators and admins can inspect runs. See [Phase 22 notes](docs/interview-defense/phase-22.md).
+
+The Phase 23 UI provides the incident-to-run-to-approval flow, displays only stored backend events, and reads the versioned evaluation artifact. It derives dashboard counts and run durations from API responses; model metrics absent from saved evaluation output are labeled as not measured. The legacy task workflow is available at `/tasks/new` and `/board`. Details and gates are in [Phase 23 notes](docs/interview-defense/phase-23.md).
 
 The extraction contract is a JSON array of tasks with `task`, `owner`, `deadline`, and a `priority` enum. Gemini is asked for schema-constrained JSON, then the complete response is validated with Pydantic before any PostgreSQL insert. Empty, malformed, or invalid responses are retried once; upstream failures try the preferred Flash model names in order and return a controlled 502/504 if they remain unavailable.
 
@@ -72,7 +82,7 @@ Python 3.11+, FastAPI, Pydantic, Google GenAI Python SDK (`google-genai`, Gemini
 
 ## Local setup
 
-Requirements: Python 3.11+, Node.js 20+, npm, Docker Compose, and a Gemini API key for extraction.
+Requirements: Python 3.11+, Node.js 20+, npm, and Docker Compose. A Gemini API key is needed for live agent investigations and task extraction; stored dashboard, incident, approval, and evaluation views use backend data.
 
 Backend (from the repository root):
 
@@ -134,6 +144,11 @@ npm run build
 | GET | `/health` | Returns API liveness status |
 | POST | `/extract` | Validates text, extracts tasks, stores and returns them |
 | GET | `/tasks` | Lists tasks, newest first |
+| GET | `/incidents` | Lists simulator incidents and their service/environment |
+| GET | `/agent/runs` | Lists up to 100 authorized stored runs and their trace events |
+| GET | `/agent/runs/{run_id}/events` | Reads one authorized structured run trace |
+| GET | `/approvals?decision=all` | Lists approval history; default lists pending approvals |
+| GET | `/evaluation/latest` | Reads the checked-in machine-readable component study |
 | PATCH | `/tasks/{id}` | Updates a task status (`todo`, `in_progress`, `done`) |
 | DELETE | `/tasks/{id}` | Deletes a task |
 
@@ -150,7 +165,7 @@ npm run build
 
 ## Limitations
 
-This is a single-user application with no authentication or user accounts. PostgreSQL is local-only in this phase. Model extraction can still make semantic mistakes, so users should review tasks before acting on them. The guideline file is illustrative and must be reviewed before use in a real organization.
+The simulator is local-only; no production infrastructure is connected. Agent success rate on the dashboard is a terminal run-status ratio and is not the labeled OpsBench task-success measure. Current component evaluation does not measure end-to-end diagnosis accuracy, tool selection accuracy, latency, or cost. Model output can be wrong and should be reviewed. The operational knowledge documents are illustrative.
 
 ## Project layout
 

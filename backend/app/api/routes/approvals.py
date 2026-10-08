@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from app.approval.repository import ApprovalConflict, ApprovalNotFound
 from app.approval.schemas import ApprovalDecisionRequest, ApprovalRecord
@@ -11,7 +11,10 @@ def build_approval_router(approval_service: ApprovalService) -> APIRouter:
     route = APIRouter(prefix="/approvals")
 
     @route.get("", response_model=list[ApprovalRecord])
-    async def list_approvals(_: UserPrincipal = Depends(get_current_user)) -> list[ApprovalRecord]:
+    async def list_approvals(decision: str = Query(default="pending", pattern="^(pending|all)$"),
+                             _: UserPrincipal = Depends(get_current_user)) -> list[ApprovalRecord]:
+        if decision == "all":
+            return approval_service.repository.list_all()
         return approval_service.repository.list_pending()
 
     @route.get("/{approval_id}", response_model=ApprovalRecord)

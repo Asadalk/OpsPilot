@@ -135,6 +135,20 @@ class ApprovalRepository:
         except psycopg.Error as exc:
             raise ApprovalError from exc
 
+    def list_all(self) -> list[ApprovalRecord]:
+        # Expire overdue pending records through the existing durable transition first.
+        self.list_pending()
+        try:
+            with get_connection(self.database_url) as connection:
+                rows = connection.execute(
+                    "SELECT approvals.*, actions.proposal, actions.idempotency_key, actions.result AS execution_result "
+                    "FROM approvals JOIN actions ON actions.action_id = approvals.action_id "
+                    "ORDER BY approvals.requested_at DESC"
+                ).fetchall()
+            return [self._record(row, ActionProposal.model_validate(row["proposal"]), row["execution_result"]) for row in rows]
+        except psycopg.Error as exc:
+            raise ApprovalError from exc
+
     def _expire(self, approval_id: int) -> ApprovalRecord:
         now = datetime.now(timezone.utc)
         try:

@@ -1,10 +1,12 @@
 from contextlib import asynccontextmanager
+import json
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.tasks import build_task_router
-from app.api.routes.simulator import build_simulator_router
+from app.api.routes.simulator import build_simulator_router, build_incidents_router
 from app.api.routes.agent import build_agent_router
 from app.api.routes.auth import router as auth_router
 from app.api.routes.approvals import build_approval_router
@@ -36,7 +38,7 @@ app.add_middleware(
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE"],
-    allow_headers=["Content-Type"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 
@@ -52,7 +54,18 @@ async def read_root() -> dict[str, str]:
 
 app.include_router(build_task_router(task_service))
 app.include_router(build_simulator_router(simulator_service))
+app.include_router(build_incidents_router(simulator_service))
 app.include_router(build_agent_router(ops_agent))
 app.include_router(auth_router)
 app.include_router(build_approval_router(ops_agent.approval_service))
 app.include_router(build_audit_router(AuditRepository(settings.database_url)))
+
+
+@app.get("/evaluation/latest")
+async def latest_evaluation():
+    artifact = Path(__file__).resolve().parents[1] / "benchmarks" / "opsbench" / "v1" / "results" / "phase20-ablation.json"
+    try:
+        return json.loads(artifact.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=503, detail="No valid recorded evaluation artifact is available") from exc

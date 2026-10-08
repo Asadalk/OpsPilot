@@ -1,146 +1,34 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
+import { ArrowLeft, Check, CircleAlert, Clock3, GitCommitHorizontal, ShieldCheck, X } from "lucide-react";
+import { api, Approval, formatDate } from "@/lib/opspilot";
 
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
-
-type Approval = {
-  id: number;
-  decision: "pending" | "approved" | "rejected" | "expired";
-  requested_at: string;
-  expires_at: string;
-  decided_by: string | null;
-  reason: string | null;
-  proposal: {
-    action_type: string;
-    target: string;
-    reason: string;
-    risk_level: string;
-    status: string;
-    evidence: Array<Record<string, unknown>>;
-  };
-  execution_result: Record<string, unknown> | null;
-};
-
-type ActionVerification = {
-  status: "SUCCESS" | "FAILED" | "INCONCLUSIVE";
-  reason: string;
-  attempt_count: number;
-  max_automatic_attempts: number;
-  escalated: boolean;
-  attempts: Array<{
-    attempt: number;
-    before: { state: string; metrics: Record<string, number> };
-    after: { state: string; metrics: Record<string, number> };
-    verification: string;
-    reason: string;
-    reinvestigation?: { state: string; metrics: Record<string, number> };
-  }>;
-};
-
-function metricsSummary(metrics: Record<string, number>) {
-  const entries = Object.entries(metrics);
-  if (!entries.length) return "No metric samples";
-  return entries.map(([name, value]) => `${name}: ${value}`).join(" · ");
-}
-
-export default function ApprovalPage() {
-  const params = useParams<{ approvalId: string }>();
-  const [token, setToken] = useState("");
-  const [approval, setApproval] = useState<Approval | null>(null);
+export default function ApprovalDetailPage() {
+  const { approvalId } = useParams<{ approvalId: string }>();
+  const [item, setItem] = useState<Approval | null>(null);
   const [reason, setReason] = useState("");
-  const [message, setMessage] = useState("Enter an approval token to load this request.");
-  const [loading, setLoading] = useState(false);
-
-  async function loadApproval() {
-    setLoading(true);
-    try {
-      const response = await fetch(`${API_BASE_URL}/approvals/${params.approvalId}`, {
-        headers: { Authorization: `Bearer ${token}` },
-        cache: "no-store",
-      });
-      if (!response.ok) throw new Error(`Unable to load approval (${response.status})`);
-      setApproval((await response.json()) as Approval);
-      setMessage("");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Unable to load approval");
-    } finally {
-      setLoading(false);
-    }
-  }
-
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => { api<Approval>(`/approvals/${approvalId}`).then(setItem).catch((e) => setError(e.message)); }, [approvalId]);
   async function decide(decision: "approve" | "reject") {
-    setLoading(true);
-    try {
-      const response = await fetch(`${API_BASE_URL}/approvals/${params.approvalId}/${decision}`, {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ reason }),
-      });
-      if (!response.ok) throw new Error(`Decision failed (${response.status})`);
-      setApproval((await response.json()) as Approval);
-      setMessage(decision === "approve" ? "Approval recorded and simulated action resumed." : "Rejection recorded; action was not executed.");
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Decision failed");
-    } finally {
-      setLoading(false);
-    }
+    setBusy(true); setError("");
+    try { const updated = await api<Approval>(`/approvals/${approvalId}/${decision}`, { method: "POST", body: JSON.stringify({ reason }) }); setItem(updated); }
+    catch (e) { setError(e instanceof Error ? e.message : "Decision failed"); }
+    finally { setBusy(false); }
   }
-
-  return (
-    <section className="mx-auto max-w-2xl">
-      <div className="rounded-xl border border-slate-200 bg-white p-6 shadow-soft">
-        <h1 className="text-2xl font-semibold text-slate-900">Human approval</h1>
-        <p className="mt-2 text-sm text-slate-600">Review the proposed action before it can resume.</p>
-        <label className="mt-6 block text-sm font-medium text-slate-700" htmlFor="token">Bearer token</label>
-        <input id="token" value={token} onChange={(event) => setToken(event.target.value)} className="mt-2 w-full rounded-lg border border-slate-300 p-3 text-sm" placeholder="Paste a JWT" />
-        <button type="button" onClick={loadApproval} disabled={loading || !token} className="mt-3 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white disabled:opacity-50">Load approval</button>
-        {approval && (
-          <div className="mt-6 space-y-3 rounded-lg bg-slate-50 p-4 text-sm text-slate-700">
-            <p><strong>Action:</strong> {approval.proposal.action_type}</p>
-            <p><strong>Target:</strong> {approval.proposal.target}</p>
-            <p><strong>Risk:</strong> {approval.proposal.risk_level}</p>
-            <p><strong>Status:</strong> {approval.decision}</p>
-            <p><strong>Reason:</strong> {approval.proposal.reason}</p>
-            {approval.decision === "pending" && (
-              <>
-                <label className="block pt-3 text-sm font-medium" htmlFor="decision-reason">Decision reason</label>
-                <textarea id="decision-reason" value={reason} onChange={(event) => setReason(event.target.value)} className="min-h-24 w-full rounded-lg border border-slate-300 p-3" />
-                <div className="flex gap-3 pt-2">
-                  <button type="button" onClick={() => decide("approve")} disabled={loading} className="rounded-lg bg-emerald-700 px-4 py-2 font-medium text-white disabled:opacity-50">Approve</button>
-                  <button type="button" onClick={() => decide("reject")} disabled={loading} className="rounded-lg bg-rose-700 px-4 py-2 font-medium text-white disabled:opacity-50">Reject</button>
-                </div>
-              </>
-            )}
-            {approval.execution_result && (() => {
-              const result = approval.execution_result as { verification?: ActionVerification; resolved_incident_ids?: number[] };
-              const verification = result.verification;
-              if (!verification) return null;
-              return (
-                <div className="mt-4 border-t border-slate-200 pt-4">
-                  <h2 className="font-semibold text-slate-900">Execution verification: {verification.status}</h2>
-                  <p className="mt-1">{verification.reason}</p>
-                  <p className="mt-1 text-xs text-slate-500">Attempts: {verification.attempt_count} / {verification.max_automatic_attempts}{verification.escalated ? " · Escalation required" : ""}</p>
-                  {verification.attempts.map((attempt) => (
-                    <div key={attempt.attempt} className="mt-3 rounded border border-slate-200 bg-white p-3">
-                      <p className="font-medium">Attempt {attempt.attempt}: {attempt.verification}</p>
-                      <p className="mt-1">Before · {attempt.before.state} · {metricsSummary(attempt.before.metrics)}</p>
-                      <p className="mt-1">After · {attempt.after.state} · {metricsSummary(attempt.after.metrics)}</p>
-                      {attempt.reinvestigation && <p className="mt-1">Reinvestigation · {attempt.reinvestigation.state} · {metricsSummary(attempt.reinvestigation.metrics)}</p>}
-                    </div>
-                  ))}
-                  {(result.resolved_incident_ids ?? []).length > 0 && <p className="mt-3 font-medium text-emerald-800">Resolved incident IDs: {result.resolved_incident_ids?.join(", ")}</p>}
-                </div>
-              );
-            })()}
-          </div>
-        )}
-        {message && <p className="mt-4 text-sm text-slate-600">{message}</p>}
-      </div>
-    </section>
-  );
+  const verification = item?.execution_result && typeof item.execution_result.verification === "object" ? item.execution_result.verification as Record<string, unknown> : null;
+  return <div className="mx-auto max-w-4xl space-y-6"><Link href="/approvals" className="inline-flex items-center gap-2 text-xs font-semibold text-slate-500"><ArrowLeft size={14} /> Approval queue</Link>{error && <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">{error}{error.includes("authority") || error.includes("authorized") ? <> · <Link href={`/login?next=/approvals/${approvalId}`} className="font-semibold underline">Sign in as operator or admin</Link></> : error.includes("401") ? <> · <Link href={`/login?next=/approvals/${approvalId}`} className="font-semibold underline">Sign in</Link></> : null}</div>}{item && <>
+    <div className="panel p-6 md:p-8"><div className="flex flex-col justify-between gap-5 sm:flex-row"><div><p className="eyebrow">APPROVAL REQUEST · #{item.id}</p><h1 className="page-title mt-2 capitalize">{item.proposal.action_type.replaceAll("_", " ")}</h1><p className="mt-2 text-sm text-slate-500">Target <strong className="font-semibold text-slate-800">{item.proposal.target}</strong> · run <Link href={`/runs/${item.run_id}`} className="font-mono text-blue-700 underline">{item.run_id.slice(0, 8)}</Link></p></div><span className={`h-fit w-fit rounded-full px-3 py-1.5 text-xs font-semibold capitalize ${item.decision === "pending" ? "bg-amber-50 text-amber-700" : item.decision === "approved" ? "bg-emerald-50 text-emerald-700" : item.decision === "rejected" ? "bg-rose-50 text-rose-700" : "bg-slate-100 text-slate-600"}`}>{item.decision}</span></div>
+      <div className="mt-6 grid gap-3 sm:grid-cols-3"><div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Risk</p><p className="mt-2 text-sm font-semibold text-slate-800">{item.proposal.risk_level}</p></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Requested</p><p className="mt-2 text-sm font-semibold text-slate-800">{formatDate(item.requested_at)}</p></div><div className="rounded-xl bg-slate-50 p-4"><p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Expires</p><p className="mt-2 text-sm font-semibold text-slate-800">{formatDate(item.expires_at)}</p></div></div>
+      <div className="mt-5 rounded-xl border border-slate-100 p-4"><p className="text-[10px] font-bold uppercase tracking-wide text-slate-400">Agent rationale</p><p className="mt-2 text-sm leading-6 text-slate-700">{item.proposal.reason}</p></div>
+      {item.proposal.evidence.length > 0 && <details className="mt-4 rounded-xl border border-slate-100 p-4"><summary className="cursor-pointer text-xs font-semibold text-slate-700">Review proposal evidence ({item.proposal.evidence.length})</summary><pre className="mt-3 max-h-64 overflow-auto rounded-lg bg-slate-950 p-3 text-[10px] text-slate-200">{JSON.stringify(item.proposal.evidence, null, 2)}</pre></details>}
+      {item.decision === "pending" && <div className="mt-6 rounded-2xl border border-amber-200 bg-amber-50/50 p-5"><div className="flex gap-3"><ShieldCheck size={18} className="mt-0.5 text-amber-700" /><div><h2 className="text-sm font-semibold text-amber-950">Human decision required</h2><p className="mt-1 text-xs leading-5 text-amber-900/80">The simulator action is paused. Approval resumes this action; rejection records the decision without executing it.</p></div></div><label htmlFor="reason" className="mt-4 block text-xs font-semibold text-slate-700">Decision note</label><textarea id="reason" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="Add context for the audit record" className="mt-2 min-h-20 w-full rounded-xl border border-slate-200 bg-white p-3 text-sm outline-none focus:border-blue-500" /><div className="mt-4 flex flex-wrap gap-3"><button disabled={busy} onClick={() => decide("approve")} className="inline-flex items-center gap-2 rounded-xl bg-emerald-700 px-4 py-2.5 text-xs font-semibold text-white disabled:opacity-50"><Check size={15} /> Approve & resume</button><button disabled={busy} onClick={() => decide("reject")} className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-4 py-2.5 text-xs font-semibold text-rose-700 disabled:opacity-50"><X size={15} /> Reject action</button></div></div>}
+      {item.decided_at && <p className="mt-5 text-xs text-slate-500">Decision {item.decision} by <strong className="text-slate-700">{item.decided_by ?? "system"}</strong> at {formatDate(item.decided_at)}{item.reason ? ` · ${item.reason}` : ""}</p>}
+    </div>
+    {item.decision !== "pending" && <div className="grid gap-5 md:grid-cols-2"><section className="panel p-5"><div className="flex items-center gap-2"><GitCommitHorizontal size={16} className="text-blue-700" /><h2 className="text-sm font-semibold">Execution</h2></div>{item.decision === "approved" ? <p className="mt-3 text-sm text-slate-600">{item.execution_result ? "A simulator execution result was recorded." : "No execution result is attached."}</p> : <p className="mt-3 text-sm text-slate-600">{item.decision === "rejected" ? "The action was rejected and did not execute." : "The approval expired; the action did not execute."}</p>}{item.execution_result && <pre className="mt-3 max-h-72 overflow-auto rounded-xl bg-slate-950 p-3 text-[10px] leading-4 text-slate-200">{JSON.stringify(item.execution_result, null, 2)}</pre>}</section><section className="panel p-5"><div className="flex items-center gap-2"><Clock3 size={16} className="text-violet-700" /><h2 className="text-sm font-semibold">Verification</h2></div>{verification ? <><span className={`mt-3 inline-block rounded-full px-2.5 py-1 text-[10px] font-bold ${verification.status === "SUCCESS" ? "bg-emerald-50 text-emerald-700" : verification.status === "FAILED" ? "bg-rose-50 text-rose-700" : "bg-amber-50 text-amber-700"}`}>{String(verification.status)}</span><p className="mt-3 text-xs leading-5 text-slate-600">{String(verification.reason ?? "")}</p><p className="mt-2 text-xs text-slate-500">Attempts: {String(verification.attempt_count ?? "—")} / {String(verification.max_automatic_attempts ?? "—")}</p></> : <p className="mt-3 text-sm text-slate-500">{item.decision === "approved" ? "Verification metadata was not included in the execution response." : "No verification was run because the action was not approved."}</p>}</section></div>}
+    <div className="flex gap-2 text-[11px] text-slate-400"><CircleAlert size={14} /> Approval and execution outcomes are durable records from the backend.</div>
+  </>}</div>;
 }

@@ -36,3 +36,16 @@ def build_simulator_router(simulator_service: SimulatorService) -> APIRouter:
         return read(simulator_service.incidents, service_id)
 
     return route
+
+
+def build_incidents_router(simulator_service: SimulatorService) -> APIRouter:
+    route = APIRouter(prefix="/incidents")
+
+    @route.get("")
+    async def list_incidents():
+        try:
+            return simulator_service.all_incidents()
+        except SimulatorServiceError as exc:
+            raise HTTPException(status_code=500, detail="Simulator data unavailable") from exc
+
+    return route

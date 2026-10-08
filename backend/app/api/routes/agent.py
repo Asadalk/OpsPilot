@@ -22,6 +22,12 @@ def build_agent_router(agent: OpsAgent) -> APIRouter:
             raise HTTPException(status_code=404, detail="Agent run not found")
         return trace
 
+    @route.get("/runs")
+    async def list_runs(limit: int = 100, principal: UserPrincipal = Depends(get_current_user)):
+        if limit < 1 or limit > 100:
+            raise HTTPException(status_code=422, detail="limit must be between 1 and 100")
+        return event_repository.list_runs(principal, limit)
+
     @route.post("/investigate", response_model=AgentState)
     async def investigate(payload: InvestigationRequest, principal: UserPrincipal = Depends(get_current_user)) -> AgentState:
         try:

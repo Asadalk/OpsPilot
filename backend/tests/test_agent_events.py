@@ -59,6 +59,10 @@ def test_completed_run_reconstructs_investigation_approval_and_execution(databas
     assert isinstance(trace, AgentRunTrace)
     assert trace.status == "completed"
     assert trace.service == service
+    assert trace.evidence
+    assert trace.knowledge_citations
+    assert trace.knowledge_citations[0].get("source")
+    assert trace.action_proposal["action_type"] == "restart_service"
     assert [event.event_type for event in trace.events] == [
         "run.started", "retrieval", "classify", "metrics", "planning", "logs",
         "planning", "deployment", "diagnosis", "action_proposed", "policy", "approval", "run.paused",
@@ -103,3 +107,32 @@ def test_trace_api_requires_auth_and_viewers_only_read_their_own_runs(database_p
     other_token = AuthService().issue_token(UserPrincipal(username="different-viewer", role="viewer"))
     hidden_trace = api("GET", f"/agent/runs/{run_id}/events", headers={"Authorization": f"Bearer {other_token}"})
     assert hidden_trace.status_code == 404
+
+
+def test_dashboard_read_apis_return_persisted_incidents_runs_and_approval_history(database_path, api, monkeypatch):
+    init_db(database_path)
+    ingest_directory(Path(__file__).resolve().parents[2] / "knowledge", database_path)
+    monkeypatch.setattr(ops_agent, "provider", TraceProvider())
+    token = AuthService().issue_token(UserPrincipal(username="dashboard-operator", role="operator"))
+    headers = {"Authorization": f"Bearer {token}"}
+
+    incidents = api("GET", "/incidents")
+    assert incidents.status_code == 200
+    assert isinstance(incidents.json(), list)
+
+    result = api("POST", "/agent/investigate", json={"request": "Investigate a service latency incident."}, headers=headers)
+    assert result.status_code == 200
+    run_id = result.json()["run_id"]
+    approval_id = result.json()["approval"]["id"]
+
+    runs = api("GET", "/agent/runs", headers=headers)
+    assert runs.status_code == 200
+    assert any(run["run_id"] == run_id and run["events"] for run in runs.json())
+
+    approvals = api("GET", "/approvals?decision=all", headers=headers)
+    assert approvals.status_code == 200
+    assert any(approval["id"] == approval_id and approval["decision"] == "pending" for approval in approvals.json())
+
+    evaluation = api("GET", "/evaluation/latest")
+    assert evaluation.status_code == 200
+    assert evaluation.json()["comparisons"]

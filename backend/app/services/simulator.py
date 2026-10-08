@@ -35,3 +35,9 @@ class SimulatorService:
 
     def incidents(self, service_id: int) -> list[dict]:
         return self._read(self.repository.get_incidents, service_id)
+
+    def all_incidents(self) -> list[dict]:
+        try:
+            return self.repository.list_incidents()
+        except SimulatorRepositoryError as exc:
+            raise SimulatorServiceError from exc
