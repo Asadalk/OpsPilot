@@ -1,185 +1,132 @@
 # OpsPilot
 
-OpsPilot is a controlled operations workspace for investigating simulator incidents, reviewing human approvals, and reconstructing agent runs from stored events. The original task extraction workflow remains available as a separate task board.
+OpsPilot is a controlled AI operations assistant for a simulated production environment. For an incident, it:
 
-## Features
+1. investigates with deterministic tools;
+2. retrieves runbooks and postmortems;
+3. forms competing hypotheses and an evidence-backed diagnosis;
+4. proposes a remediation;
+5. lets server-side policy and a human reviewer decide whether that remediation runs;
+6. executes it against the simulator;
+7. verifies the result.
 
-- LLM task extraction with schema-validated JSON output (Groq by default, Gemini optional)
-- Lightweight local RAG over example operational guidelines
-- Pydantic validation of every extracted task before database writes
-- PostgreSQL persistence through Docker Compose
-- Seeded operational domain tables for services, incidents, deployments, logs, and metrics
-- Kanban board with status updates and task deletion
-- Clear API and UI handling for validation, database, and model-provider failures
-- Docker Compose support for local runs
-- Incident dashboard with simulator health evidence and live run status
-- Persisted agent run timeline, human approval queue, and evaluation report
-- JWT sign-in with viewer, operator, and admin roles
+Every step is stored as audit records and an ordered event trace. A 100-scenario benchmark, OpsBench, measures the system.
+
+It evolved, phase by phase, from [ops-assistant](https://github.com/Asadalk/ops-assistant), a task-extraction app. The original task workflow is still available at `/tasks/new` and `/board`.
+
+> No real infrastructure is connected. Every write targets the local simulator.
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-  User --> Next[Next.js OpsPilot workspace]
-  Next -->|Bearer-authenticated HTTP| API[FastAPI]
-  API --> Agent[Bounded Ops Agent]
-  Agent --> Tools[Read-only simulator tools]
-  Agent --> RAG[Hybrid knowledge retrieval]
-  Agent --> Policy[Server policy and approval]
-  Policy --> Sim[Controlled simulator actions]
-  API --> DB[(PostgreSQL + pgvector)]
-  Tools --> DB
+  User --> UI[Next.js workspace]
+  UI -->|HTTP + JWT| API[FastAPI]
+  API --> Agent[Ops Agent: one manual loop]
+  Agent --> Tools[READ tools]
+  Agent --> RAG[Hybrid retrieval]
   Agent --> LLM[LLM provider: Groq or Gemini]
-  Agent --> DB
+  Agent --> Policy[Policy engine: role x risk x environment]
+  Policy --> Approval[Durable human approval]
+  Approval --> Sim[Simulator action + verification]
+  Tools --> DB[(PostgreSQL + pgvector)]
+  RAG --> DB
+  Sim --> DB
+  API --> DB
 ```
 
-The model API key is read by FastAPI from the backend environment. The browser only calls FastAPI.
+The architecture has one frontend, one backend, one database, and one agent. The model can only choose a registered READ tool or return a diagnosis. The application runs the tool itself. Write actions never come from the model directly: they go through the policy engine, a human approval when required, simulator execution, and verification.
 
-## RAG pipeline
+See [docs/architecture.md](docs/architecture.md) for the request flow, provider details, simulator faults, and reliability rules.
 
-Operational knowledge is stored under `knowledge/` and ingested into PostgreSQL + pgvector. Hybrid retrieval combines semantic and keyword matching and returns source citations with agent runs. The documents are examples for the simulator, not production policy.
+## What it does
 
-## Operational domain
+| Area | Behavior |
+| --- | --- |
+| Simulator | Seeded services, incidents, deployments, logs, and metrics. Each degraded service has a hidden fault, and only the matching action fixes it. |
+| Tools | `get_service_health`, `get_metrics`, `search_logs`, `get_recent_deployments`, `get_incident_history`, `search_runbooks`. All are typed and bounded, and none needs a model. |
+| Retrieval | Markdown knowledge in `knowledge/`, ingested at startup into pgvector. Search is hybrid (semantic plus keyword), with a relevance floor and source citations. |
+| Diagnosis | Competing hypotheses with model-assigned scores (not calibrated probabilities), supporting and contradicting evidence, and cited sources. |
+| Policy | `viewer`, `operator`, and `admin` roles. Risk comes from the server, not the model. Production is stricter: operators need approval for HIGH risk, and CRITICAL is never allowed. |
+| Approval | Pending approvals survive restarts, time out, and reject duplicate or unauthorized decisions. The requester cannot decide their own action. |
+| Execution | Before and after snapshots. Verification returns `SUCCESS`, `FAILED`, or `INCONCLUSIVE`, with at most one automatic retry. Incidents are resolved only on `SUCCESS`. Actions are idempotent per run, action, and target. |
+| Records | Append-only `audit_events` (the incident story) and `agent_events` (the run trace, including per-call token counts). |
+| Reliability | Bounded timeouts. One retry for transient errors only, honoring `retry-after` on 429. Pacing keeps calls under the provider's tokens-per-minute limit. Failed tools or empty data become explicit uncertainty. |
+| UI | Dashboard, incidents, run timeline, approvals, and evaluation. Every number comes from stored records. |
 
-The PostgreSQL migration creates `services`, `incidents`, `deployments`, `logs`, and `metrics`. The latter four reference `services` with foreign keys. Seed data is included so the database can be inspected immediately after `docker compose up`.
-
-The operations simulator adds deterministic services including `payments-api`, `checkout-api`, `auth-api`, `inventory-api`, and `notification-api`. Investigation evidence is available without any model through `GET /services/{id}/health`, `/metrics`, `/logs`, `/deployments`, and `/incidents`.
-
-The deterministic Python tools in `backend/app/tools` expose the same evidence without FastAPI or a model. They validate typed inputs, bound result sizes, and return structured Pydantic results. Runbook search uses the hybrid knowledge retrieval.
-
-`POST /agent/investigate` runs a bounded direct loop in which the configured model selects only registered read-only investigation tools, observes their results, and returns a diagnosis and possible proposal. Actual write actions remain outside this loop and run only through the approval service against the simulator. Each run and tool call is recorded in PostgreSQL.
-
-Operational knowledge is stored under `knowledge/`. Docker Compose mounts it and the backend ingests it at startup (`KNOWLEDGE_DIR`); outside Compose run `PYTHONPATH=backend backend/.venv/bin/python -m app.rag.ingest --knowledge-dir knowledge`. PostgreSQL + pgvector stores the cleaned chunks and 128-dimensional embeddings. Retrieval returns provenance and is included as cited supporting context in agent diagnoses.
-
-Knowledge search supports `semantic`, `keyword`, and `hybrid` modes. Hybrid is the default because the Phase 9 benchmark preserved the best top-3 result for both natural-language and exact operational identifiers.
-
-Agent diagnoses include structured competing hypotheses with model-assigned scores and supporting or contradicting evidence. These scores are not calibrated probabilities. The agent persists hypothesis history and must gather additional evidence for ambiguous scenarios before finalizing a diagnosis.
-
-Action types are separated into `READ` and `WRITE` tools. Write-capable operations such as incident updates, GitHub issues, reports, restarts, and rollbacks currently produce deterministic proposals only. Every proposal includes its target, reason, evidence, risk level, and `proposed` status; nothing is executed automatically.
-
-Authentication uses JWT bearer tokens from `POST /auth/token`. Roles are `viewer`, `operator`, and `admin`. Policy is evaluated by the backend after the agent proposes an action, from the role, server-assigned risk, and the service environment: viewers cannot restart services, operators need approval for high-risk production actions, CRITICAL actions are never allowed in production, and the requester cannot approve their own action. The LLM cannot override the server-derived risk or policy outcome.
-
-The append-only audit trail records login results, incident and run activity, tool calls, policy decisions, proposals, approval decisions, simulated execution, verification, and resolution. Authenticated users can retrieve a complete incident timeline with `GET /audit/incidents/{incident_id}`. Audit rows are protected from update, delete, and truncate by database triggers.
-
-Agent dependencies have bounded timeouts for the model provider, retrieval, tools, and PostgreSQL connections/statements. Recognized transient timeouts, connection failures, deadlocks, serialization conflicts, and provider throttling/server errors receive at most one retry with a short backoff. Permanent tool failures become structured failed observations; incomplete evidence is surfaced as uncertainty, with actions withheld and escalation marked when required. Empty retrieval is reported as unavailable context, not proof that no relevant guidance exists.
-
-See [the architecture overview](docs/architecture.md), [phase log](docs/PHASE-LOG.md), [build gates](docs/BUILD-GATES.md), and [Phase 15 interview notes](docs/interview-defense/phase-15.md) for implementation and verification details.
-
-OpsBench v1 contains 100 versioned operational scenarios across incident investigation, ambiguity, missing evidence, injected tool and retrieval failures, unsafe requests, authorization, prompt injection, approval rejection, and verification failure. Validate and repeat-load the dataset with `PYTHONPATH=backend python -m app.benchmarks.opsbench --repeat 5`; see [`backend/benchmarks/opsbench/v1/scenarios.json`](backend/benchmarks/opsbench/v1/scenarios.json) and [the Phase 18 notes](docs/interview-defense/phase-18.md). This foundation validates scenario definitions and reproducibility; it does not claim model accuracy scores.
-
-Phase 19 adds a paired prompt-only Gemini versus OpsPilot evaluator. Metric formulas and the initial measured slice are documented in [the Phase 19 notes](docs/interview-defense/phase-19.md); its JSON artifacts include raw predictions, per-case scores, latency, and model token usage.
-
-Agent runs expose their actual persisted lifecycle through authenticated `GET /agent/runs` and `GET /agent/runs/{run_id}/events`. The ordered PostgreSQL trace includes model decisions, retrieval, tool calls, policy, approval, simulated execution, verification, and run status, with durations when measurable. Viewers can read only runs they initiated; operators and admins can inspect runs. See [Phase 22 notes](docs/interview-defense/phase-22.md).
-
-The Phase 23 UI provides the incident-to-run-to-approval flow, displays only stored backend events, and reads the versioned evaluation artifact. It derives dashboard counts and run durations from API responses; model metrics absent from saved evaluation output are labeled as not measured. The legacy task workflow is available at `/tasks/new` and `/board`. Details and gates are in [Phase 23 notes](docs/interview-defense/phase-23.md).
-
-The extraction contract is a JSON array of tasks with `task`, `owner`, `deadline`, and a `priority` enum. The model is asked for schema-validated JSON, then the complete response is validated with Pydantic before any PostgreSQL insert. Invalid responses are rejected; transient upstream failures are retried once and otherwise return a controlled 502/504.
-
-## Tech stack
-
-Python 3.11+, FastAPI, Pydantic, httpx (Groq OpenAI-compatible API, default model `openai/gpt-oss-120b`), optional Google GenAI SDK for Gemini, psycopg, PostgreSQL + pgvector, Next.js 14, TypeScript, Tailwind CSS, Docker, and pytest.
-
-## Local setup
-
-Requirements: Python 3.11+, Node.js 20+, npm, and Docker Compose. A Groq API key (or a Gemini key with `LLM_PROVIDER=gemini`) is needed for live agent investigations and task extraction; stored dashboard, incident, approval, and evaluation views use backend data.
-
-Backend (from the repository root):
-
-```bash
-cd backend
-python3.11 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-cp .env.example .env
-# Set GROQ_API_KEY in backend/.env
-.venv/bin/python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
-```
-
-Frontend, in another terminal from the repository root:
-
-```bash
-cd frontend
-cp .env.local.example .env.local
-npm ci
-npm run dev
-```
-
-Open http://localhost:3000. The backend API is at http://localhost:8000 and its health check is http://localhost:8000/health.
-
-## Docker Compose
+## Setup (Docker Compose)
 
 ```bash
 cp backend/.env.example backend/.env
-# Set GROQ_API_KEY in backend/.env
+# Set GROQ_API_KEY in backend/.env (or LLM_PROVIDER=gemini plus GEMINI_API_KEY)
 docker compose up --build
 ```
 
-Open http://localhost:3000. API and health URLs are http://localhost:8000 and http://localhost:8000/health. PostgreSQL data is stored in the named `postgres_data` volume. Stop with `docker compose down`; the volume remains for the next start.
+Open http://localhost:3000 and sign in as `operator`/`operator`. Other development accounts are `viewer`/`viewer` and `admin`/`admin`; change `AUTH_USERS_JSON` and `JWT_SECRET` outside local development.
 
-## Tests and checks
+Open an incident and choose **Start agent investigation**. A HIGH-risk production proposal pauses for approval; sign in as `admin` to approve it.
 
-Run backend tests inside the backend container. They use a separate `opspilot_test` database on the same PostgreSQL server (created automatically) and never call a hosted model:
+The API is at http://localhost:8000 (`/health`). PostgreSQL data persists in the `postgres_data` volume across `docker compose down` and `docker compose up`.
 
-```bash
-docker compose up -d --build
-docker compose exec backend pytest -q tests
-```
-
-The RAG tests cover production outage, security exposure, deployment verification, irrelevant queries, source attribution, and prompt context wiring. For a live model check, set `GROQ_API_KEY` in `backend/.env` and start an investigation from an incident page.
-
-Frontend type check and production build:
+## Tests
 
 ```bash
-cd frontend
-npx tsc --noEmit
-npm run build
+docker compose exec backend pytest -q tests          # 100+ tests; separate opspilot_test database; no model calls
+cd frontend && npx tsc --noEmit && npm run build      # type check and production build
 ```
 
-## API
+The security suite (`backend/tests/security/`) covers:
 
-| Method | Path | Behavior |
-| --- | --- | --- |
-| GET | `/health` | Returns API liveness status |
-| POST | `/extract` | Validates text, extracts tasks, stores and returns them |
-| GET | `/tasks` | Lists tasks, newest first |
-| GET | `/incidents` | Lists simulator incidents and their service/environment |
-| GET | `/agent/runs` | Lists up to 100 authorized stored runs and their trace events |
-| GET | `/agent/runs/{run_id}/events` | Reads one authorized structured run trace |
-| GET | `/approvals?decision=all` | Lists approval history; default lists pending approvals |
-| GET | `/evaluation/latest` | Reads the checked-in machine-readable component study |
-| PATCH | `/tasks/{id}` | Updates a task status (`todo`, `in_progress`, `done`) |
-| DELETE | `/tasks/{id}` | Deletes a task |
+- prompt injection through runbooks and logs;
+- a viewer attempting a rollback;
+- approval bypass, including self-approval;
+- requests to reveal secrets.
 
-`POST /extract` accepts `{"text":"..."}`. Empty or whitespace-only text and invalid update statuses receive HTTP 422. A missing task receives 404. Model-provider failures are returned as 502, or 504 on timeout. Unexpected persistence failures receive 500 without exposing stack traces.
+## OpsBench
 
-## Design decisions
+`backend/benchmarks/opsbench/v2/scenarios.json` contains 100 scenarios across 12 categories. Each scenario runs against its own fixture "world" in a dedicated `opspilot_bench` database. Its controls (tool or retrieval failure, hostile logs or runbooks, role, approval decision) are applied for real.
 
-- **Validate model output:** schema-constrained generation improves shape consistency, and Pydantic validates the complete response before any task is inserted. This protects PostgreSQL from malformed or incomplete model output.
-- **Use PostgreSQL:** one named-volume database supports the multi-entity direction without retaining a hidden second persistence system.
-- **Keep the model provider on the backend:** the API key stays out of browser code and frontend configuration.
-- **Prefer structured output:** JSON schema gives the model a specific task shape and priority enum instead of relying on arbitrary prose parsing.
-- **Retry only transient failures:** timeouts, throttling, and 5xx responses get one retry (honoring `retry-after` for rate limits); malformed output is reported, not guessed.
-- **Retrieval before inference:** guideline chunks are scored and included in the model prompt before structured generation; they are never read after the model call.
+```bash
+docker compose exec backend python -m app.benchmarks.opsbench          # validate the dataset and confirm a stable SHA
+docker compose exec backend python -m app.benchmarks.runner run --agent opspilot --out /tmp/run
+docker compose exec backend python -m app.benchmarks.runner report --out /tmp/run
+```
+
+The agents you can run are `rule` (deterministic reference), `opspilot` (LLM), and `baseline` (one prompt-only call whose proposal is executed directly). `--ablation` removes one component at a time. Metric definitions are in `backend/app/benchmarks/scoring.py`. Results and their limits are in [docs/interview-defense/phase-19.md](docs/interview-defense/phase-19.md) and [phase-20.md](docs/interview-defense/phase-20.md).
+
+## Project documents
+
+- [docs/architecture.md](docs/architecture.md): the current architecture.
+- [docs/BUILD-GATES.md](docs/BUILD-GATES.md): the evidence for each phase gate, plus the Phase 23 revalidation.
+- [docs/PHASE-LOG.md](docs/PHASE-LOG.md): a short history of each phase.
+- [docs/interview-defense/](docs/interview-defense/): per-phase notes covering design, failure modes, tradeoffs, and likely questions.
+- [docs/opspilot-context.md](docs/opspilot-context.md): the starting point, goals, and non-goals.
 
 ## Limitations
 
-The simulator is local-only; no production infrastructure is connected. Agent success rate on the dashboard is a terminal run-status ratio and is not the labeled OpsBench task-success measure. Current component evaluation does not measure end-to-end diagnosis accuracy, tool selection accuracy, latency, or cost. Model output can be wrong and should be reviewed. The operational knowledge documents are illustrative.
+- The simulator and knowledge documents are illustrative. The faults are designed so the right and wrong actions can be told apart.
+- OpsBench labels were written by the developer. The rule-based agent was written for the same worlds, so its scores show that the harness is reproducible, not how good it is.
+- Live model results depend on the provider, model version, and rate limits. Free-tier Groq allows 8,000 tokens per minute, so the live runs are slow.
+- The dashboard success rate is a ratio of terminal run statuses, not OpsBench task success.
+- Cost is not computed. Only provider-reported tokens are recorded.
 
 ## Project layout
 
 ```text
-backend/
-  main.py
-  models.py
-  database.py
-  migrations/
-  routes/tasks.py
-  services/gemini.py
-  services/task_service.py
-  tests/
-frontend/
-  app/
-  components/
-  lib/api.ts
-  types/task.ts
-docker-compose.yml
+backend/app/
+  agent/        agent loop, decision providers (Groq/Gemini), schemas, events
+  tools/        READ tools and the tool base class
+  rag/          ingestion, embeddings, hybrid retrieval
+  policy/       role x risk x environment rules
+  approval/     durable approvals and decisions
+  db/           repositories, simulator actions and verification
+  audit/        append-only audit events
+  llm/          Groq HTTP client with token pacing
+  benchmarks/   OpsBench loader, worlds, rule agent, runner, scoring, ablation
+  api/routes/   FastAPI routers
+backend/migrations/    ordered SQL migrations (001–016)
+backend/benchmarks/    OpsBench datasets and result artifacts
+knowledge/             runbooks, postmortems, architecture notes
+frontend/app/          Next.js pages
+docs/                  architecture, gates, phase log, interview notes
 ```
