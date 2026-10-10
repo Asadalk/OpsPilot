@@ -31,6 +31,13 @@ class ApprovalService:
 
     def decide(self, approval_id: int, decision: Literal["approved", "rejected"], principal: UserPrincipal, reason: str) -> ApprovalRecord:
         if principal.role not in {"operator", "admin"}:
-            raise ApprovalAuthorizationError
+            raise ApprovalAuthorizationError("Approval authority required")
+        if self.repository.get(approval_id).requested_by == principal.username:
+            raise ApprovalAuthorizationError("The requester cannot decide their own action")
         execute = self.executor.execute if decision == "approved" else None
         return self.repository.decide(approval_id, decision, principal.username, reason, execute)
+
+    def execute_allowed(self, approval_id: int, principal: UserPrincipal) -> ApprovalRecord:
+        """Run an action the policy engine allowed outright, recorded as a policy decision, not a human one."""
+        return self.repository.decide(approval_id, "approved", f"policy:{principal.username}",
+                                      "Allowed by server policy without human approval.", self.executor.execute)

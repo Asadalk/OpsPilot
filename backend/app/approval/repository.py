@@ -52,8 +52,9 @@ class ApprovalRepository:
                     (action_id, run_id, Jsonb(proposal.model_dump(mode="json")), action_idempotency_key(run_id, proposal), "pending_approval"),
                 )
                 row = connection.execute(
-                    "INSERT INTO approvals (run_id, action_id, expires_at, decision) VALUES (%s, %s, %s, %s) RETURNING *",
-                    (run_id, action_id, expires_at, "pending"),
+                    "INSERT INTO approvals (run_id, action_id, expires_at, decision, requested_by) "
+                    "VALUES (%s, %s, %s, %s, %s) RETURNING *",
+                    (run_id, action_id, expires_at, "pending", actor),
                 ).fetchone()
                 row["idempotency_key"] = action_idempotency_key(run_id, proposal)
                 append_audit_event(connection, actor=actor, event_type="action.proposed", entity_type="action",
@@ -165,7 +166,7 @@ class ApprovalRepository:
                 else:
                     connection.execute("UPDATE actions SET status = 'expired' WHERE action_id = %s", (row["action_id"],))
                     connection.execute(
-                        "UPDATE agent_runs SET status = 'completed', diagnosis = 'Approval expired; action was not executed.', completed_at = %s WHERE run_id = %s AND status = 'paused'",
+                        "UPDATE agent_runs SET status = 'completed', diagnosis = concat_ws(E'\\n\\n', diagnosis, 'Approval expired; action was not executed.'), completed_at = %s WHERE run_id = %s AND status = 'paused'",
                         (now, row["run_id"]),
                     )
                     append_audit_event(connection, actor="system:approval-timeout", event_type="approval.expired",
@@ -222,7 +223,7 @@ class ApprovalRepository:
                 if row["expires_at"] <= now:
                     connection.execute("UPDATE approvals SET decision = 'expired', decided_at = %s, reason = 'Approval expired before a human decision.' WHERE id = %s", (now, approval_id))
                     connection.execute("UPDATE actions SET status = 'expired' WHERE action_id = %s", (row["action_id"],))
-                    connection.execute("UPDATE agent_runs SET status = 'completed', diagnosis = 'Approval expired; action was not executed.', completed_at = %s WHERE run_id = %s AND status = 'paused'", (now, row["run_id"]))
+                    connection.execute("UPDATE agent_runs SET status = 'completed', diagnosis = concat_ws(E'\\n\\n', diagnosis, 'Approval expired; action was not executed.'), completed_at = %s WHERE run_id = %s AND status = 'paused'", (now, row["run_id"]))
                     append_audit_event(connection, actor="system:approval-timeout", event_type="approval.expired",
                                        entity_type="approval", entity_id=approval_id, run_id=row["run_id"],
                                        reason="Approval expired before a human decision.", result={"decision": "expired"},
@@ -298,14 +299,16 @@ class ApprovalRepository:
                                                entity_id=incident_id, run_id=row["run_id"], reason="Action verification succeeded.",
                                                result={"status": "resolved", "verification": verification},
                                                details={"title": incident["title"] if incident else None, "action_id": str(row["action_id"])})
+                    granted = "Policy allowed execution" if username.startswith("policy:") else "Human approval granted"
                     if decision == "approved" and verification == "SUCCESS":
                         resolved = execution_result.get("resolved_incident_ids", [])
-                        diagnosis = f"Human approval granted; verification SUCCESS; resolved incidents: {resolved}."
+                        diagnosis = f"{granted}; verification SUCCESS; resolved incidents: {resolved}."
                     elif decision == "approved":
-                        diagnosis = f"Human approval granted; verification {verification}; action requires escalation."
+                        diagnosis = f"{granted}; verification {verification}; action requires escalation."
                     else:
                         diagnosis = "Human approval rejected; action was not executed."
-                    connection.execute("UPDATE agent_runs SET status = 'completed', diagnosis = %s, completed_at = %s WHERE run_id = %s AND status = 'paused'", (diagnosis, now, row["run_id"]))
+                    # Append the outcome so the agent's evidence-based diagnosis is kept.
+                    connection.execute("UPDATE agent_runs SET status = 'completed', diagnosis = concat_ws(E'\\n\\n', diagnosis, %s::text), completed_at = %s WHERE run_id = %s AND status = 'paused'", (diagnosis, now, row["run_id"]))
                     row["decision"] = decision
                     row["decided_at"] = now
                     row["decided_by"] = username
@@ -331,5 +334,6 @@ class ApprovalRepository:
             idempotency_key=row["idempotency_key"], requested_at=row["requested_at"],
             expires_at=row["expires_at"], decided_at=row.get("decided_at"), decision=row["decision"],
             decided_by=row.get("decided_by"), reason=row.get("reason"), proposal=proposal,
+            requested_by=row.get("requested_by"),
             execution_result=execution_result,
         )

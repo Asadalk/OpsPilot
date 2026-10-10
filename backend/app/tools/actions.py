@@ -1,17 +1,8 @@
-from app.actions.schemas import ActionProposal, ActionProposalInput, RiskLevel
+from app.actions.schemas import ActionProposal, ActionProposalInput
+from app.policy.engine import RISK_BY_ACTION
 from app.tools.base import Tool
 
 
-RISK_BY_ACTION: dict[str, RiskLevel] = {
-    "create_incident": "MEDIUM",
-    "update_incident": "MEDIUM",
-    "create_github_issue": "MEDIUM",
-    "generate_report": "LOW",
-    "send_notification": "MEDIUM",
-    "restart_service": "HIGH",
-    "rollback_deployment": "HIGH",
-    "delete_data": "CRITICAL",
-}
 
 
 class ProposeAction(Tool[ActionProposalInput, ActionProposal]):

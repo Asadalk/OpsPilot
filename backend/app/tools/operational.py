@@ -50,7 +50,9 @@ class GetMetrics(OperationalTool):
         service_id = self.service_id(parameters.service)
         records = self.repository.get_metrics(service_id)
         if parameters.metric_name:
-            records = [record for record in records if record["metric_name"] == parameters.metric_name]
+            # Substring match, like log search: models ask for "latency", not "http_request_latency_ms".
+            wanted = parameters.metric_name.lower()
+            records = [record for record in records if wanted in record["metric_name"].lower()]
         return self.result_schema(service=parameters.service, metrics=records[: parameters.limit])
 
 

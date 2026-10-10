@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from app.services.gemini import _model_preferences
 from services.gemini import GeminiError, GeminiTimeout, extract_tasks
 from services.rag import retrieve
 
@@ -55,20 +56,21 @@ def test_api_failure_tries_fallback_models_then_fails():
     client = FakeClient([RuntimeError("offline"), RuntimeError("offline"), RuntimeError("offline")])
     with pytest.raises(GeminiError, match="request failed"):
         asyncio.run(extract_tasks("Do it", client))
-    assert client.aio.models.generate_content.call_count == 3
+    assert client.aio.models.generate_content.call_count == len(_model_preferences())
 
 
 def test_timeout_is_classified():
     client = FakeClient([TimeoutError("request timeout")] * 6)
     with pytest.raises(GeminiTimeout, match="timed out"):
         asyncio.run(extract_tasks("Do it", client))
-    assert client.aio.models.generate_content.call_count == 6
+    # Each configured model gets one retry after a timeout.
+    assert client.aio.models.generate_content.call_count == 2 * len(_model_preferences())
 
 
 def test_missing_key_fails_without_import_crash(monkeypatch):
     from app.services import gemini
 
-    monkeypatch.setattr(gemini, "settings", replace(gemini.settings, gemini_api_key=""))
+    monkeypatch.setattr(gemini, "settings", replace(gemini.settings, llm_provider="gemini", gemini_api_key=""))
     with pytest.raises(GeminiError, match="GEMINI_API_KEY"):
         asyncio.run(extract_tasks("Do it"))
 

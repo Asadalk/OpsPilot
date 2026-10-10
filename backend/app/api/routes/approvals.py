@@ -28,7 +28,7 @@ def build_approval_router(approval_service: ApprovalService) -> APIRouter:
         try:
             return approval_service.decide(approval_id, decision, principal, payload.reason)
         except ApprovalAuthorizationError as exc:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Approval authority required") from exc
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc) or "Approval authority required") from exc
         except ApprovalNotFound as exc:
             raise HTTPException(status_code=404, detail="Approval not found") from exc
         except ApprovalConflict as exc:

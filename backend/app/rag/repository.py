@@ -106,7 +106,11 @@ class KnowledgeRepository:
             row["similarity"] = round(0.45 * semantic_score + 0.55 * keyword_score, 6)
             row["retrieval_mode"] = "hybrid"
             row.pop("embedding", None)
-        return sorted(candidates.values(), key=lambda row: (-row["similarity"], row["source"], row["chunk"]))[:top_k]
+        # A chunk with no shared terms (cosine <= 0) and no keyword hit is not evidence of
+        # relevance; without this filter every query returned top_k "matches".
+        relevant = [row for row in candidates.values()
+                    if row.get("semantic_similarity", 0.0) > 0 or row.get("keyword_score", 0.0) > 0]
+        return sorted(relevant, key=lambda row: (-row["similarity"], row["source"], row["chunk"]))[:top_k]
 
     def search(self, query: str, top_k: int = 3, mode: str = "hybrid") -> list[dict]:
         if mode == "semantic":

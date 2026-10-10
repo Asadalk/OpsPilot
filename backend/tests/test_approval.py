@@ -64,6 +64,10 @@ class FlagshipPaymentProvider:
         )
 
 
+
+# A different operator from the requester, because requesters cannot approve their own actions.
+REVIEWER = UserPrincipal(username="reviewer", role="operator")
+
 def reset_payments_scenario(database_path):
     with get_connection(database_path) as connection:
         service = connection.execute("SELECT id FROM services WHERE name = 'payments-api'").fetchone()
@@ -108,7 +112,7 @@ def test_high_risk_action_pauses_then_approves_and_executes(database_path):
     assert repeated.id == state.approval.id
     assert repeated.idempotency_key == state.approval.idempotency_key
 
-    approved = agent.approval_service.decide(state.approval.id, "approved", operator, "Incident review approved")
+    approved = agent.approval_service.decide(state.approval.id, "approved", REVIEWER, "Incident review approved")
     assert approved.decision == "approved"
     assert approved.execution_result["status"] == "simulated"
 
@@ -118,7 +122,7 @@ def test_high_risk_action_pauses_then_approves_and_executes(database_path):
         side_effect_count_before_retry = connection.execute(
             "SELECT COUNT(*) AS count FROM logs WHERE message = 'Simulated restart completed.'"
         ).fetchone()["count"]
-    retried = agent.approval_service.decide(state.approval.id, "approved", operator, "Incident review approved")
+    retried = agent.approval_service.decide(state.approval.id, "approved", REVIEWER, "Incident review approved")
     assert retried.execution_result == approved.execution_result
     assert retried.action_id == approved.action_id
 
@@ -153,7 +157,7 @@ def test_high_risk_action_pauses_then_approves_and_executes(database_path):
     assert "incident.resolved" in event_types
 
     with pytest.raises(ApprovalConflict):
-        agent.approval_service.decide(state.approval.id, "rejected", operator, "Conflicting retry")
+        agent.approval_service.decide(state.approval.id, "rejected", REVIEWER, "Conflicting retry")
 
 
 def test_reject_and_unauthorized_approval(database_path):
@@ -166,7 +170,7 @@ def test_reject_and_unauthorized_approval(database_path):
     with pytest.raises(ApprovalAuthorizationError):
         agent.approval_service.decide(state.approval.id, "approved", viewer, "not allowed")
 
-    rejected = agent.approval_service.decide(state.approval.id, "rejected", operator, "Risk not accepted")
+    rejected = agent.approval_service.decide(state.approval.id, "rejected", REVIEWER, "Risk not accepted")
     assert rejected.decision == "rejected"
     assert rejected.execution_result is None
     with get_connection(database_path) as connection:
@@ -185,7 +189,7 @@ def test_restart_is_verified_and_resolves_flagship_incident(database_path):
     assert len(state.tool_calls) == 2
     assert state.tool_results[-1]["result"]["metrics"][0]["value"] == 1842.0
 
-    approved = agent.approval_service.decide(state.approval.id, "approved", operator, "Restart approved")
+    approved = agent.approval_service.decide(state.approval.id, "approved", REVIEWER, "Restart approved")
     result = approved.execution_result
     assert result["verification"]["status"] == "SUCCESS"
     assert result["verification"]["attempt_count"] == 1
@@ -218,7 +222,7 @@ def test_failed_rollback_reinvestigates_then_escalates_after_two_attempts(databa
     operator = UserPrincipal(username="operator", role="operator")
     state = asyncio.run(agent.investigate(f"Rollback {service_name}", operator))
 
-    approved = agent.approval_service.decide(state.approval.id, "approved", operator, "Rollback approved")
+    approved = agent.approval_service.decide(state.approval.id, "approved", REVIEWER, "Rollback approved")
     verification = approved.execution_result["verification"]
     assert verification["status"] == "FAILED"
     assert verification["attempt_count"] == 2
@@ -250,7 +254,7 @@ def test_rollback_restores_previous_successful_deployment(database_path):
     operator = UserPrincipal(username="operator", role="operator")
     state = asyncio.run(agent.investigate(f"Rollback {service_name}", operator))
 
-    approved = agent.approval_service.decide(state.approval.id, "approved", operator, "Rollback approved")
+    approved = agent.approval_service.decide(state.approval.id, "approved", REVIEWER, "Rollback approved")
     result = approved.execution_result
     assert result["verification"]["status"] == "SUCCESS"
     assert result["verification"]["attempts"][0]["execution"]["restored_version"] == "v1"
@@ -266,14 +270,14 @@ def test_restart_without_observable_evidence_is_inconclusive(database_path):
     service_name = f"verification-empty-{uuid4()}"
     with get_connection(database_path) as connection:
         connection.execute(
-            "INSERT INTO services (name, environment, repository, current_state) VALUES (%s, 'staging', %s, 'healthy')",
+            "INSERT INTO services (name, environment, repository, current_state) VALUES (%s, 'production', %s, 'healthy')",
             (service_name, f"example/{service_name}"),
         )
     agent = build_agent(database_path, HighRiskProvider("restart_service", service_name))
     operator = UserPrincipal(username="operator", role="operator")
     state = asyncio.run(agent.investigate(f"Restart {service_name}", operator))
 
-    approved = agent.approval_service.decide(state.approval.id, "approved", operator, "Restart approved")
+    approved = agent.approval_service.decide(state.approval.id, "approved", REVIEWER, "Restart approved")
     verification = approved.execution_result["verification"]
     assert verification["status"] == "INCONCLUSIVE"
     assert verification["attempt_count"] == 1
@@ -302,7 +306,7 @@ def test_expired_approval_is_closed_without_executing(database_path):
     story = AuditRepository(database_path).incident_story(incident_id)
     assert any(event.event_type == "approval.expired" for event in story.events)
     with pytest.raises(ApprovalConflict):
-        agent.approval_service.decide(expired.id, "approved", operator, "too late")
+        agent.approval_service.decide(expired.id, "approved", REVIEWER, "too late")
 
 
 def test_approval_api_authenticates_and_records_decision(database_path, api, monkeypatch):
@@ -320,8 +324,15 @@ def test_approval_api_authenticates_and_records_decision(database_path, api, mon
     assert pending.status_code == 200
     assert state.approval.id in [item["id"] for item in pending.json()]
 
-    response = api(
+    self_approval = api(
         "POST", f"/approvals/{state.approval.id}/approve", headers=headers,
+        json={"reason": "Approving my own request"},
+    )
+    assert self_approval.status_code == 403
+    assert self_approval.json()["detail"] == "The requester cannot decide their own action"
+    reviewer_headers = {"Authorization": f"Bearer {AuthService().issue_token(REVIEWER)}"}
+    response = api(
+        "POST", f"/approvals/{state.approval.id}/approve", headers=reviewer_headers,
         json={"reason": "Reviewed incident evidence"},
     )
     assert response.status_code == 200
@@ -334,3 +345,104 @@ def test_approval_api_authenticates_and_records_decision(database_path, api, mon
     assert story.status_code == 200
     assert story.json()["incident"]["title"] == "Payments latency spike"
     assert any(event["event_type"] == "incident.resolved" for event in story.json()["events"])
+
+
+def faulty_service(database_path, prefix: str, fault: str) -> str:
+    service_name = f"{prefix}-{uuid4()}"
+    with get_connection(database_path) as connection:
+        service = connection.execute(
+            "INSERT INTO services (name, environment, repository, current_state, fault) "
+            "VALUES (%s, 'production', %s, 'degraded', %s) RETURNING id",
+            (service_name, f"example/{service_name}", fault),
+        ).fetchone()
+        connection.execute(
+            "INSERT INTO deployments (service_id, version, deployed_at, author, status) VALUES "
+            "(%s, 'v1', NOW() - INTERVAL '2 hours', 'test', 'success'), "
+            "(%s, 'v2', NOW() - INTERVAL '1 hour', 'test', 'success')",
+            (service["id"], service["id"]),
+        )
+        connection.execute(
+            "INSERT INTO metrics (timestamp, service_id, metric_name, value) VALUES (NOW(), %s, 'http_5xx_rate', 12.0)",
+            (service["id"],),
+        )
+        connection.execute(
+            "INSERT INTO incidents (title, severity, status, service_id) VALUES (%s, 'sev2', 'investigating', %s)",
+            (f"Fault test {service_name}", service["id"]),
+        )
+    return service_name
+
+
+def approve_proposal(database_path, action_type: str, service_name: str) -> dict:
+    agent = build_agent(database_path, HighRiskProvider(action_type, service_name))
+    operator = UserPrincipal(username="operator", role="operator")
+    state = asyncio.run(agent.investigate(f"{action_type} {service_name}", operator))
+    return agent.approval_service.decide(state.approval.id, "approved", REVIEWER, "Approved").execution_result
+
+
+def test_restart_does_not_fix_a_bad_deployment_and_escalates(database_path):
+    setup(database_path)
+    service_name = faulty_service(database_path, "fault-bad-deploy", "bad_deployment")
+    result = approve_proposal(database_path, "restart_service", service_name)
+    verification = result["verification"]
+    assert verification["status"] == "FAILED"
+    assert verification["attempt_count"] == 2
+    assert verification["escalated"] is True
+    assert result["resolved_incident_ids"] == []
+    assert result["post_action_state"]["state"] == "degraded"
+
+
+def test_rollback_fixes_a_bad_deployment(database_path):
+    setup(database_path)
+    service_name = faulty_service(database_path, "fault-bad-deploy", "bad_deployment")
+    result = approve_proposal(database_path, "rollback_deployment", service_name)
+    assert result["verification"]["status"] == "SUCCESS"
+    assert len(result["resolved_incident_ids"]) == 1
+
+
+def test_no_action_on_the_service_fixes_an_external_dependency(database_path):
+    setup(database_path)
+    for action_type in ("restart_service", "rollback_deployment"):
+        service_name = faulty_service(database_path, "fault-dependency", "external_dependency")
+        result = approve_proposal(database_path, action_type, service_name)
+        assert result["verification"]["status"] == "FAILED", action_type
+        assert result["resolved_incident_ids"] == []
+
+
+def test_policy_allowed_staging_restart_executes_as_a_recorded_policy_decision(database_path):
+    setup(database_path)
+    service_name = f"staging-pool-{uuid4()}"
+    with get_connection(database_path) as connection:
+        service = connection.execute(
+            "INSERT INTO services (name, environment, repository, current_state, fault) "
+            "VALUES (%s, 'staging', %s, 'degraded', 'connection_pool_exhaustion') RETURNING id",
+            (service_name, f"example/{service_name}"),
+        ).fetchone()
+        connection.execute(
+            "INSERT INTO metrics (timestamp, service_id, metric_name, value) VALUES (NOW(), %s, 'http_request_latency_ms', 900.0)",
+            (service["id"],),
+        )
+    agent = build_agent(database_path, HighRiskProvider("restart_service", service_name))
+    operator = UserPrincipal(username="operator", role="operator")
+    state = asyncio.run(agent.investigate(f"Restart {service_name}", operator))
+
+    assert state.policy_decision.outcome == "allow"
+    assert state.status == "completed"
+    assert state.approval.decision == "approved"
+    assert state.approval.decided_by == "policy:operator"
+    assert state.approval.execution_result["verification"]["status"] == "SUCCESS"
+    with get_connection(database_path) as connection:
+        run = connection.execute("SELECT status, diagnosis FROM agent_runs WHERE run_id = %s", (state.run_id,)).fetchone()
+    assert run["status"] == "completed"
+    assert "Policy allowed execution; verification SUCCESS" in run["diagnosis"]
+
+
+def test_approval_outcome_is_appended_to_the_agent_diagnosis(database_path):
+    setup(database_path)
+    service_name = faulty_service(database_path, "diagnosis-kept", "connection_pool_exhaustion")
+    agent = build_agent(database_path, HighRiskProvider("restart_service", service_name))
+    state = asyncio.run(agent.investigate(f"Restart {service_name}", UserPrincipal(username="operator", role="operator")))
+    agent.approval_service.decide(state.approval.id, "approved", REVIEWER, "Approved")
+    with get_connection(database_path) as connection:
+        diagnosis = connection.execute("SELECT diagnosis FROM agent_runs WHERE run_id = %s", (state.run_id,)).fetchone()["diagnosis"]
+    assert diagnosis.startswith(state.diagnosis)
+    assert "\n\nHuman approval granted; verification SUCCESS" in diagnosis

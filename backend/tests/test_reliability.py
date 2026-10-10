@@ -8,7 +8,7 @@ from app.agent.agent import build_agent
 from app.agent.schemas import AgentDecision
 from app.auth.schemas import UserPrincipal
 from app.db.agent import AgentRepositoryError
-from app.db.database import init_db
+from app.db.database import get_connection, init_db
 from app.rag.repository import KnowledgeRepositoryError
 from app.tools.base import Tool, ToolResultError
 
@@ -81,6 +81,12 @@ def test_llm_timeout_is_retried_then_returns_explicit_failure(database_path):
     assert state.failure_states[-1].category == "llm_timeout"
     assert state.failure_states[-1].attempts == 2
     assert "No diagnosis was produced" in state.diagnosis
+    with get_connection(database_path) as connection:
+        details = connection.execute(
+            "SELECT details FROM agent_events WHERE run_id = %s AND event_type = 'classify' AND status = 'failed'",
+            (state.run_id,),
+        ).fetchone()["details"]
+    assert details["reason"].startswith("TimeoutError")
 
 
 def test_missing_model_diagnosis_is_not_reported_as_success(database_path):

@@ -39,6 +39,8 @@ def test_initial_migration_is_recorded(database_path):
         "012_action_idempotency.sql",
         "013_agent_events.sql",
         "014_agent_event_timestamp.sql",
+        "015_simulator_faults.sql",
+        "016_approval_requester.sql",
     }
 
 

@@ -38,6 +38,36 @@ def test_rbac_policy_admin_allows_configured_high_risk_restart():
     assert decision.risk_level == "HIGH"
 
 
+def proposal(action_type: str, target: str = "payments-api") -> ActionProposal:
+    return ActionProposal(action_type=action_type, target=target, reason="Policy environment test.",
+                          evidence=[], risk_level="LOW", status="proposed")
+
+
+def test_policy_environment_changes_operator_high_risk_outcome():
+    operator = UserPrincipal(username="o", role="operator")
+    assert PolicyEngine().evaluate(proposal("restart_service"), operator, "production").outcome == "require_approval"
+    assert PolicyEngine().evaluate(proposal("restart_service", "catalog-api"), operator, "staging").outcome == "allow"
+
+
+def test_policy_never_permits_critical_actions_in_production():
+    for role in ("viewer", "operator", "admin"):
+        decision = PolicyEngine().evaluate(proposal("delete_data"), UserPrincipal(username=role, role=role), "production")
+        assert decision.outcome == "deny", role
+    admin = UserPrincipal(username="a", role="admin")
+    assert PolicyEngine().evaluate(proposal("delete_data"), admin, "staging").outcome == "require_approval"
+
+
+def test_policy_table_covers_every_role_and_risk():
+    from typing import get_args
+
+    from app.actions.schemas import RiskLevel
+    from app.policy.engine import POLICY_RULES
+
+    from app.auth.schemas import Role
+
+    assert set(POLICY_RULES) == {(role, risk) for role in get_args(Role) for risk in get_args(RiskLevel)}
+
+
 class SpoofedRiskProvider:
     async def decide(self, _state, _tools):
         return AgentDecision(

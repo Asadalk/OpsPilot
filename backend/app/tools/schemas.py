@@ -15,11 +15,11 @@ class BoundedServiceToolInput(ServiceToolInput):
 
 
 class MetricsToolInput(BoundedServiceToolInput):
-    metric_name: str | None = None
+    metric_name: str | None = Field(default=None, description="Case-insensitive substring of the metric name, e.g. 'latency'.")
 
 
 class LogsToolInput(BoundedServiceToolInput):
-    query: str | None = None
+    query: str | None = Field(default=None, description="Case-insensitive substring of the log message.")
     level: Literal["debug", "info", "warn", "error"] | None = None
 
 

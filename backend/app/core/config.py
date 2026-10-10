@@ -21,15 +21,22 @@ class Settings:
         "DATABASE_URL",
         "postgresql://opspilot:opspilot@localhost:5433/opspilot",
     )
+    # Which hosted model backs the agent and task extraction: "groq" or "gemini".
+    llm_provider: str = os.getenv("LLM_PROVIDER", "groq").strip().lower()
+    groq_api_key: str = os.getenv("GROQ_API_KEY", "")
+    groq_model: str = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     gemini_timeout_seconds: int = _parse_timeout(os.getenv("GEMINI_TIMEOUT_SECONDS", "25"))
+    llm_timeout_seconds: int = _parse_timeout(os.getenv("LLM_TIMEOUT_SECONDS", os.getenv("GEMINI_TIMEOUT_SECONDS", "25")))
     tool_timeout_seconds: int = _parse_timeout(os.getenv("TOOL_TIMEOUT_SECONDS", "5"))
     retrieval_timeout_seconds: int = _parse_timeout(os.getenv("RETRIEVAL_TIMEOUT_SECONDS", "5"))
     database_connect_timeout_seconds: int = _parse_timeout(os.getenv("DATABASE_CONNECT_TIMEOUT_SECONDS", "3"))
     database_statement_timeout_ms: int = _parse_timeout(os.getenv("DATABASE_STATEMENT_TIMEOUT_MS", "5000"))
-    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+    gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
     gemini_fallback_models: str = os.getenv("GEMINI_FALLBACK_MODELS", "")
     environment: str = os.getenv("ENVIRONMENT", "development")
+    # When set, startup ingests this directory so retrieval never silently runs on an empty index.
+    knowledge_dir: str = os.getenv("KNOWLEDGE_DIR", "")
     jwt_secret: str = os.getenv("JWT_SECRET", "ops-pilot-development-secret-change-me")
     jwt_expire_minutes: int = _parse_timeout(os.getenv("JWT_EXPIRE_MINUTES", "60"))
     auth_users_json: str = os.getenv(

@@ -4,14 +4,13 @@ OpsPilot is a controlled operations workspace for investigating simulator incide
 
 ## Features
 
-- Gemini task extraction with schema-constrained JSON output
+- LLM task extraction with schema-validated JSON output (Groq by default, Gemini optional)
 - Lightweight local RAG over example operational guidelines
 - Pydantic validation of every extracted task before database writes
 - PostgreSQL persistence through Docker Compose
 - Seeded operational domain tables for services, incidents, deployments, logs, and metrics
 - Kanban board with status updates and task deletion
-- Clear API and UI handling for validation, database, and Gemini failures
-- One retry for malformed model output and Flash model fallback after upstream API errors
+- Clear API and UI handling for validation, database, and model-provider failures
 - Docker Compose support for local runs
 - Incident dashboard with simulator health evidence and live run status
 - Persisted agent run timeline, human approval queue, and evaluation report
@@ -30,11 +29,11 @@ flowchart TD
   Policy --> Sim[Controlled simulator actions]
   API --> DB[(PostgreSQL + pgvector)]
   Tools --> DB
-  RAG --> Gemini[Google Gemini]
+  Agent --> LLM[LLM provider: Groq or Gemini]
   Agent --> DB
 ```
 
-The Gemini key is read by FastAPI from the backend environment. The browser only calls FastAPI.
+The model API key is read by FastAPI from the backend environment. The browser only calls FastAPI.
 
 ## RAG pipeline
 
@@ -44,13 +43,13 @@ Operational knowledge is stored under `knowledge/` and ingested into PostgreSQL 
 
 The PostgreSQL migration creates `services`, `incidents`, `deployments`, `logs`, and `metrics`. The latter four reference `services` with foreign keys. Seed data is included so the database can be inspected immediately after `docker compose up`.
 
-The operations simulator adds deterministic services including `payments-api`, `checkout-api`, `auth-api`, `inventory-api`, and `notification-api`. Investigation evidence is available without Gemini through `GET /services/{id}/health`, `/metrics`, `/logs`, `/deployments`, and `/incidents`.
+The operations simulator adds deterministic services including `payments-api`, `checkout-api`, `auth-api`, `inventory-api`, and `notification-api`. Investigation evidence is available without any model through `GET /services/{id}/health`, `/metrics`, `/logs`, `/deployments`, and `/incidents`.
 
-The deterministic Python tools in `backend/app/tools` expose the same evidence without FastAPI or Gemini. They validate typed inputs, bound result sizes, and return structured Pydantic results. Runbook search is intentionally an explicit placeholder until the later retrieval phase.
+The deterministic Python tools in `backend/app/tools` expose the same evidence without FastAPI or a model. They validate typed inputs, bound result sizes, and return structured Pydantic results. Runbook search uses the hybrid knowledge retrieval.
 
-`POST /agent/investigate` runs a bounded direct loop in which Gemini selects only registered read-only investigation tools, observes their results, and returns a diagnosis and possible proposal. Actual write actions remain outside this loop and run only through the approval service against the simulator. Each run and tool call is recorded in PostgreSQL.
+`POST /agent/investigate` runs a bounded direct loop in which the configured model selects only registered read-only investigation tools, observes their results, and returns a diagnosis and possible proposal. Actual write actions remain outside this loop and run only through the approval service against the simulator. Each run and tool call is recorded in PostgreSQL.
 
-Operational knowledge is stored under `knowledge/` and ingested with `PYTHONPATH=backend backend/.venv/bin/python -m app.rag.ingest --knowledge-dir knowledge`. PostgreSQL + pgvector stores the cleaned chunks and 128-dimensional embeddings. Retrieval returns provenance and is included as cited supporting context in agent diagnoses.
+Operational knowledge is stored under `knowledge/`. Docker Compose mounts it and the backend ingests it at startup (`KNOWLEDGE_DIR`); outside Compose run `PYTHONPATH=backend backend/.venv/bin/python -m app.rag.ingest --knowledge-dir knowledge`. PostgreSQL + pgvector stores the cleaned chunks and 128-dimensional embeddings. Retrieval returns provenance and is included as cited supporting context in agent diagnoses.
 
 Knowledge search supports `semantic`, `keyword`, and `hybrid` modes. Hybrid is the default because the Phase 9 benchmark preserved the best top-3 result for both natural-language and exact operational identifiers.
 
@@ -58,11 +57,11 @@ Agent diagnoses include structured competing hypotheses with model-assigned scor
 
 Action types are separated into `READ` and `WRITE` tools. Write-capable operations such as incident updates, GitHub issues, reports, restarts, and rollbacks currently produce deterministic proposals only. Every proposal includes its target, reason, evidence, risk level, and `proposed` status; nothing is executed automatically.
 
-Authentication uses JWT bearer tokens from `POST /auth/token`. Roles are `viewer`, `operator`, and `admin`. Policy is evaluated by the backend after the agent proposes an action: viewers cannot restart services, operators require approval for high-risk actions, and admins are allowed according to the configured policy rules. The LLM cannot override the server-derived risk or policy outcome.
+Authentication uses JWT bearer tokens from `POST /auth/token`. Roles are `viewer`, `operator`, and `admin`. Policy is evaluated by the backend after the agent proposes an action, from the role, server-assigned risk, and the service environment: viewers cannot restart services, operators need approval for high-risk production actions, CRITICAL actions are never allowed in production, and the requester cannot approve their own action. The LLM cannot override the server-derived risk or policy outcome.
 
 The append-only audit trail records login results, incident and run activity, tool calls, policy decisions, proposals, approval decisions, simulated execution, verification, and resolution. Authenticated users can retrieve a complete incident timeline with `GET /audit/incidents/{incident_id}`. Audit rows are protected from update, delete, and truncate by database triggers.
 
-Agent dependencies have bounded timeouts for Gemini, retrieval, tools, and PostgreSQL connections/statements. Recognized transient timeouts, connection failures, deadlocks, serialization conflicts, and provider throttling/server errors receive at most one retry with a short backoff. Permanent tool failures become structured failed observations; incomplete evidence is surfaced as uncertainty, with actions withheld and escalation marked when required. Empty retrieval is reported as unavailable context, not proof that no relevant guidance exists.
+Agent dependencies have bounded timeouts for the model provider, retrieval, tools, and PostgreSQL connections/statements. Recognized transient timeouts, connection failures, deadlocks, serialization conflicts, and provider throttling/server errors receive at most one retry with a short backoff. Permanent tool failures become structured failed observations; incomplete evidence is surfaced as uncertainty, with actions withheld and escalation marked when required. Empty retrieval is reported as unavailable context, not proof that no relevant guidance exists.
 
 See [the architecture overview](docs/architecture.md), [phase log](docs/PHASE-LOG.md), [build gates](docs/BUILD-GATES.md), and [Phase 15 interview notes](docs/interview-defense/phase-15.md) for implementation and verification details.
 
@@ -74,15 +73,15 @@ Agent runs expose their actual persisted lifecycle through authenticated `GET /a
 
 The Phase 23 UI provides the incident-to-run-to-approval flow, displays only stored backend events, and reads the versioned evaluation artifact. It derives dashboard counts and run durations from API responses; model metrics absent from saved evaluation output are labeled as not measured. The legacy task workflow is available at `/tasks/new` and `/board`. Details and gates are in [Phase 23 notes](docs/interview-defense/phase-23.md).
 
-The extraction contract is a JSON array of tasks with `task`, `owner`, `deadline`, and a `priority` enum. Gemini is asked for schema-constrained JSON, then the complete response is validated with Pydantic before any PostgreSQL insert. Empty, malformed, or invalid responses are retried once; upstream failures try the preferred Flash model names in order and return a controlled 502/504 if they remain unavailable.
+The extraction contract is a JSON array of tasks with `task`, `owner`, `deadline`, and a `priority` enum. The model is asked for schema-validated JSON, then the complete response is validated with Pydantic before any PostgreSQL insert. Invalid responses are rejected; transient upstream failures are retried once and otherwise return a controlled 502/504.
 
 ## Tech stack
 
-Python 3.11+, FastAPI, Pydantic, Google GenAI Python SDK (`google-genai`, Gemini 2.5 Flash with configurable 2.0 Flash and 3.8 Flash fallbacks), psycopg, PostgreSQL, Next.js 14, TypeScript, Tailwind CSS, Docker, and pytest.
+Python 3.11+, FastAPI, Pydantic, httpx (Groq OpenAI-compatible API, default model `openai/gpt-oss-120b`), optional Google GenAI SDK for Gemini, psycopg, PostgreSQL + pgvector, Next.js 14, TypeScript, Tailwind CSS, Docker, and pytest.
 
 ## Local setup
 
-Requirements: Python 3.11+, Node.js 20+, npm, and Docker Compose. A Gemini API key is needed for live agent investigations and task extraction; stored dashboard, incident, approval, and evaluation views use backend data.
+Requirements: Python 3.11+, Node.js 20+, npm, and Docker Compose. A Groq API key (or a Gemini key with `LLM_PROVIDER=gemini`) is needed for live agent investigations and task extraction; stored dashboard, incident, approval, and evaluation views use backend data.
 
 Backend (from the repository root):
 
@@ -91,7 +90,7 @@ cd backend
 python3.11 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 cp .env.example .env
-# Set GEMINI_API_KEY in backend/.env
+# Set GROQ_API_KEY in backend/.env
 .venv/bin/python -m uvicorn main:app --reload --host 127.0.0.1 --port 8000
 ```
 
@@ -110,7 +109,7 @@ Open http://localhost:3000. The backend API is at http://localhost:8000 and its 
 
 ```bash
 cp backend/.env.example backend/.env
-# Set GEMINI_API_KEY in backend/.env
+# Set GROQ_API_KEY in backend/.env
 docker compose up --build
 ```
 
@@ -118,16 +117,14 @@ Open http://localhost:3000. API and health URLs are http://localhost:8000 and ht
 
 ## Tests and checks
 
-Run backend tests against the Compose PostgreSQL service (Gemini is mocked for deterministic failure-path tests):
+Run backend tests inside the backend container. They use a separate `opspilot_test` database on the same PostgreSQL server (created automatically) and never call a hosted model:
 
 ```bash
-docker compose up -d postgres
-cd backend
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m pytest -q
+docker compose up -d --build
+docker compose exec backend pytest -q tests
 ```
 
-The RAG tests cover production outage, security exposure, deployment verification, irrelevant queries, source attribution, and prompt context wiring. For real Gemini verification, set `GEMINI_API_KEY` in `backend/.env` and run the live API flow using the commands in this README.
+The RAG tests cover production outage, security exposure, deployment verification, irrelevant queries, source attribution, and prompt context wiring. For a live model check, set `GROQ_API_KEY` in `backend/.env` and start an investigation from an incident page.
 
 Frontend type check and production build:
 
@@ -152,16 +149,16 @@ npm run build
 | PATCH | `/tasks/{id}` | Updates a task status (`todo`, `in_progress`, `done`) |
 | DELETE | `/tasks/{id}` | Deletes a task |
 
-`POST /extract` accepts `{"text":"..."}`. Empty or whitespace-only text and invalid update statuses receive HTTP 422. A missing task receives 404. Gemini failures are returned as 502, or 504 on timeout. Unexpected persistence failures receive 500 without exposing stack traces.
+`POST /extract` accepts `{"text":"..."}`. Empty or whitespace-only text and invalid update statuses receive HTTP 422. A missing task receives 404. Model-provider failures are returned as 502, or 504 on timeout. Unexpected persistence failures receive 500 without exposing stack traces.
 
 ## Design decisions
 
 - **Validate model output:** schema-constrained generation improves shape consistency, and Pydantic validates the complete response before any task is inserted. This protects PostgreSQL from malformed or incomplete model output.
 - **Use PostgreSQL:** one named-volume database supports the multi-entity direction without retaining a hidden second persistence system.
-- **Keep Gemini on the backend:** the API key stays out of browser code and frontend configuration.
+- **Keep the model provider on the backend:** the API key stays out of browser code and frontend configuration.
 - **Prefer structured output:** JSON schema gives the model a specific task shape and priority enum instead of relying on arbitrary prose parsing.
-- **Retry and fallback:** malformed output gets one stricter retry. Transient model/API errors try alternate Flash model names before returning an upstream error.
-- **Retrieval before inference:** guideline chunks are scored and included in the Gemini prompt before structured generation; they are never read after the model call.
+- **Retry only transient failures:** timeouts, throttling, and 5xx responses get one retry (honoring `retry-after` for rate limits); malformed output is reported, not guessed.
+- **Retrieval before inference:** guideline chunks are scored and included in the model prompt before structured generation; they are never read after the model call.
 
 ## Limitations
 

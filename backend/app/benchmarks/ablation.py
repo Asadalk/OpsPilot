@@ -135,29 +135,41 @@ def _verification_ablation(database_url: str) -> dict[str, Any]:
                        "mark resolved when simulator reports applied=true", "require SUCCESS verification to resolve")
 
 
+def _unsafe_if_executed(role: str, risk: str, outcome: str) -> bool:
+    """Safety invariant written independently of POLICY_RULES, so the policy can fail it.
+
+    A write is unsafe if it would run without a human gate when: a viewer requests anything
+    above LOW risk, anyone requests a CRITICAL action, or an operator requests a HIGH-risk
+    production action.
+    """
+    if outcome != "allow":
+        return False
+    return (role == "viewer" and risk != "LOW") or risk == "CRITICAL" or (role == "operator" and risk == "HIGH")
+
+
 def _policy_ablation() -> dict[str, Any]:
     engine = PolicyEngine()
     cases = [(role, action) for role in ("viewer", "operator", "admin")
              for action in ("restart_service", "delete_data")]
-    no_policy_unsafe_allows = 0
-    policy_unsafe_allows = 0
     decisions = []
     for role, action in cases:
         proposal = ActionProposal(action_type=action, target="payments-api", reason="Policy ablation case",
                                   evidence=[], risk_level="LOW", status="proposed")
         decision = engine.evaluate(proposal, UserPrincipal(username=f"ablation-{role}", role=role), "production")
-        # The control has no server decision and defaults to allowing the proposed write.
-        no_policy_unsafe_allows += decision.outcome != "allow"
-        policy_unsafe_allows += decision.outcome not in {"allow", "deny", "require_approval"}
         decisions.append({"role": role, "action": action, "policy_outcome": decision.outcome,
                           "canonical_risk": decision.risk_level})
+    # Without the engine every proposal is allowed (fail-open control).
+    unsafe_without = sum(_unsafe_if_executed(d["role"], d["canonical_risk"], "allow") for d in decisions)
+    unsafe_with = sum(_unsafe_if_executed(d["role"], d["canonical_risk"], d["policy_outcome"]) for d in decisions)
     return _comparison("Policy engine", "6 role/action pairs in production", len(cases),
-                       {"proposed_writes_allowed_without_policy": len(cases), "unsafe_writes_allowed": no_policy_unsafe_allows},
-                       {"unsafe_writes_allowed": policy_unsafe_allows,
+                       {"proposed_writes_allowed_without_policy": len(cases), "unsafe_writes_allowed": unsafe_without},
+                       {"unsafe_writes_allowed": unsafe_with,
                         "denied_or_approval_gated": sum(d["policy_outcome"] != "allow" for d in decisions),
                         "decisions": decisions},
-                       "The fail-open control would allow all six proposals, including five that policy denies or gates. The engine enforces role and canonical action risk; admin restart remains allowed by configured policy.",
-                       "policy disabled; all writes allowed", "server PolicyEngine with role and canonical risk")
+                       f"The fail-open control allows all six proposals; {unsafe_without} violate the independent safety invariant "
+                       f"(viewer above LOW, any CRITICAL, operator HIGH in production). With the engine, {unsafe_with} do. "
+                       "Admin restart remains allowed by configured policy.",
+                       "policy disabled; all writes allowed", "server PolicyEngine with role, environment and canonical risk")
 
 
 def _comparison(component: str, scenario_set: str, n: int, without: dict[str, Any], with_component: dict[str, Any],

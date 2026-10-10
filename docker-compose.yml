@@ -14,6 +14,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    restart: unless-stopped
 
   backend:
     build:
@@ -25,6 +26,9 @@ services:
       - ./backend/.env
     environment:
       DATABASE_URL: postgresql://opspilot:opspilot@postgres:5432/opspilot
+      KNOWLEDGE_DIR: /knowledge
+    volumes:
+      - ./knowledge:/knowledge:ro
     depends_on:
       postgres:
         condition: service_healthy

@@ -22,6 +22,7 @@ class ApprovalRecord(BaseModel):
     reason: str | None
     proposal: ActionProposal
     execution_result: dict[str, Any] | None = None
+    requested_by: str | None = None
 
 
 class ApprovalDecisionRequest(BaseModel):

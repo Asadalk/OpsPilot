@@ -52,7 +52,8 @@ def test_completed_run_reconstructs_investigation_approval_and_execution(databas
     agent = build_agent(database_path, TraceProvider(service))
     state = asyncio.run(agent.investigate("Investigate elevated service latency.", principal))
     assert state.status == "paused" and state.approval is not None
-    agent.approval_service.decide(state.approval.id, "approved", principal, "Trace test approval")
+    reviewer = UserPrincipal(username="trace-reviewer", role="operator")
+    agent.approval_service.decide(state.approval.id, "approved", reviewer, "Trace test approval")
 
     trace = AgentEventRepository(database_path).for_run(state.run_id, principal)
 

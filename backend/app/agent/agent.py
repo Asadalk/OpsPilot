@@ -12,6 +12,7 @@ from app.auth.schemas import UserPrincipal
 from app.core.config import settings
 from app.db.agent import AgentRepository, AgentRepositoryError
 from app.db.simulator import SimulatorRepository
+from app.db.simulator_actions import EXECUTABLE_ACTIONS
 from app.policy.engine import PolicyEngine
 from app.rag.repository import KnowledgeRepository
 from app.reliability import backoff, error_category, is_transient_error
@@ -34,7 +35,7 @@ class OpsAgent:
         self.max_steps = max_steps
         self.tool_timeout_seconds = settings.tool_timeout_seconds
         self.retrieval_timeout_seconds = settings.retrieval_timeout_seconds
-        self.llm_timeout_seconds = settings.gemini_timeout_seconds
+        self.llm_timeout_seconds = settings.llm_timeout_seconds
 
     async def investigate(self, user_request: str, principal: UserPrincipal | None = None) -> AgentState:
         principal = principal or UserPrincipal(username="internal-test", role="admin")
@@ -64,16 +65,7 @@ class OpsAgent:
             state.diagnosis = "Investigation stopped because its retrieval trace could not be stored. Escalate for review."
             self._complete_safely(state, principal.username)
             return state
-        descriptions = [
-            {
-                "name": tool.name,
-                "description": tool.description,
-                "kind": tool.kind,
-                "input_schema": tool.input_schema.model_json_schema(),
-            }
-            for tool in self.tools.values()
-            if tool.kind == "read"
-        ]
+        descriptions = [self._describe_tool(tool) for tool in self.tools.values() if tool.kind == "read"]
         try:
             for step in range(self.max_steps):
                 decision = await self._decide(state, descriptions, initial=(step == 0))
@@ -139,7 +131,10 @@ class OpsAgent:
                         state.proposed_action = decision.proposed_action.model_copy(
                             update={"risk_level": policy_decision.risk_level, "status": action_status}
                         )
-                        if policy_decision.outcome == "require_approval":
+                        executable = state.proposed_action.action_type in EXECUTABLE_ACTIONS
+                        if policy_decision.outcome == "require_approval" or (
+                                policy_decision.outcome == "allow" and executable):
+                            # Every simulator write goes through one recorded decision path.
                             state.approval = self.approval_service.repository.create_pending(
                                 state.run_id, state.proposed_action, principal.username,
                                 policy_decision.model_dump(mode="json"),
@@ -147,6 +142,9 @@ class OpsAgent:
                             state.diagnosis = self._with_uncertainty(diagnosis, state)
                             state.status = "paused"
                             self._complete_safely(state, principal.username, audit_action=False)
+                            if policy_decision.outcome == "allow":
+                                state.approval = self.approval_service.execute_allowed(state.approval.id, principal)
+                                state.status = "completed"
                             return state
                     elif decision.proposed_action and unsafe_evidence:
                         state.warnings.append("An action proposal was withheld because required tool evidence is incomplete.")
@@ -238,7 +236,7 @@ class OpsAgent:
                 last_error = exc
                 retryable = is_transient_error(exc)
                 if retryable and attempt < MAX_TRANSIENT_ATTEMPTS:
-                    await backoff(attempt)
+                    await backoff(attempt, exc)
                     continue
                 break
             if attempt > 1:
@@ -251,7 +249,9 @@ class OpsAgent:
                 duration_ms=max(0, int((time.perf_counter() - decision_started) * 1000)),
                 model=getattr(self.provider, "model", None), tool=decision.tool_name,
                 details={"decision_action": decision.action, "service": decision.service,
-                         "attempts": attempt},
+                         "attempts": attempt,
+                         # Provider-reported token counts; absent for scripted providers.
+                         **(getattr(self.provider, "last_usage", None) or {})},
             )
             return decision
         category = "malformed_model_response" if isinstance(last_error, MalformedDecisionError) else error_category(last_error or RuntimeError(), operation="llm")
@@ -263,7 +263,9 @@ class OpsAgent:
             state.run_id, "classify" if initial else "decision", "failed",
             duration_ms=max(0, int((time.perf_counter() - decision_started) * 1000)),
             model=getattr(self.provider, "model", None), error=category,
-            details={"attempts": attempt},
+            # Provider error text (e.g. "429 RESOURCE_EXHAUSTED") explains the failure in the trace.
+            details={"attempts": attempt,
+                     **({"reason": f"{type(last_error).__name__}: {str(last_error)[:200]}"} if last_error else {})},
         )
         return None
 
@@ -394,6 +396,17 @@ class OpsAgent:
         if isinstance(value, list):
             return any(OpsAgent._contains_empty_collection(item) for item in value)
         return False
+
+    @staticmethod
+    def _describe_tool(tool) -> dict[str, Any]:
+        """Compact tool description for the prompt: argument -> "type, required|optional[: help]"."""
+        arguments = {}
+        for name, field in tool.input_schema.model_fields.items():
+            annotation = field.annotation
+            kind = annotation.__name__ if isinstance(annotation, type) else str(annotation).replace("typing.", "")
+            text = f"{kind}, {'required' if field.is_required() else 'optional'}"
+            arguments[name] = f"{text}: {field.description}" if field.description else text
+        return {"name": tool.name, "description": tool.description, "kind": tool.kind, "arguments": arguments}
 
     @staticmethod
     def _cite_knowledge(diagnosis: str | None, state: AgentState) -> str | None:

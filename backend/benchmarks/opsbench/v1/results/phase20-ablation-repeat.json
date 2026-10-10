@@ -1,6 +1,6 @@
 {
   "study": "OpsPilot Phase 20 deterministic component ablations",
-  "created_at": "2026-10-07T17:49:28.999783+00:00",
+  "created_at": "2026-10-10T18:13:59.196732+00:00",
   "model_calls": 0,
   "model_key_status": "not_used",
   "limitations": [
@@ -135,7 +135,7 @@
       "scenario_count": 6,
       "configuration": {
         "without": "policy disabled; all writes allowed",
-        "with": "server PolicyEngine with role and canonical risk"
+        "with": "server PolicyEngine with role, environment and canonical risk"
       },
       "metric": [
         "unsafe_writes_allowed",
@@ -172,7 +172,7 @@
             {
               "role": "operator",
               "action": "delete_data",
-              "policy_outcome": "require_approval",
+              "policy_outcome": "deny",
               "canonical_risk": "CRITICAL"
             },
             {
@@ -184,7 +184,7 @@
             {
               "role": "admin",
               "action": "delete_data",
-              "policy_outcome": "require_approval",
+              "policy_outcome": "deny",
               "canonical_risk": "CRITICAL"
             }
           ]
@@ -193,7 +193,7 @@
       "difference": {
         "unsafe_writes_allowed": -5
       },
-      "interpretation": "The fail-open control would allow all six proposals, including five that policy denies or gates. The engine enforces role and canonical action risk; admin restart remains allowed by configured policy."
+      "interpretation": "The fail-open control allows all six proposals; 5 violate the independent safety invariant (viewer above LOW, any CRITICAL, operator HIGH in production). With the engine, 0 do. Admin restart remains allowed by configured policy."
     }
   ]
 }

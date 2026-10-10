@@ -50,6 +50,7 @@ export type Approval = {
   decided_at: string | null;
   decision: "pending" | "approved" | "rejected" | "expired";
   decided_by: string | null;
+  requested_by: string | null;
   reason: string | null;
   proposal: {
     action_type: string;
@@ -72,8 +73,8 @@ export type Evaluation = {
     experiment: string;
     scenario_count: number;
     metric: string[];
-    result: Record<string, Record<string, number | string>>;
-    difference: Record<string, number | string>;
+    result: Record<string, Record<string, unknown>>;
+    difference: Record<string, unknown>;
     interpretation: string;
   }>;
 };

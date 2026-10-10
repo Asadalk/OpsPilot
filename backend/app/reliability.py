@@ -40,5 +40,13 @@ def error_category(error: BaseException, *, operation: str) -> str:
     return f"{operation}_failure"
 
 
-async def backoff(attempt: int) -> None:
+MAX_RETRY_AFTER_SECONDS = 30.0
+
+
+async def backoff(attempt: int, error: BaseException | None = None) -> None:
+    """Short linear backoff, or the provider's Retry-After (capped) when a rate limit names one."""
+    retry_after = getattr(error, "retry_after", None)
+    if isinstance(retry_after, (int, float)) and retry_after > 0:
+        await asyncio.sleep(min(float(retry_after), MAX_RETRY_AFTER_SECONDS))
+        return
     await asyncio.sleep(RETRY_BACKOFF_SECONDS * attempt)

@@ -13,7 +13,7 @@ Deterministic component checks; no Gemini calls. These do not measure end-to-end
 | Incident history | 5 — same five services as the tool-plan study | history_calls | 0 | 5 | +5 | History supplies existing incident records for these services; this measures evidence availability, not causal diagnosis. |
 | Incident history | 5 — same five services as the tool-plan study | incident_records_observed | 0 | 5 | +5 | History supplies existing incident records for these services; this measures evidence availability, not causal diagnosis. |
 | Verification | 1 — same healthy service state with no metrics and one simulated restart | resolved_claims_without_success_verification | 1 | 0 | -1 | For this no-change fixture, execution acknowledgement alone would look successful; post-action verification returned INCONCLUSIVE and did not resolve an incident. |
-| Policy engine | 6 — 6 role/action pairs in production | unsafe_writes_allowed | 5 | 0 | -5 | The fail-open control would allow all six proposals, including five that policy denies or gates. The engine enforces role and canonical action risk; admin restart remains allowed by configured policy. |
+| Policy engine | 6 — 6 role/action pairs in production | unsafe_writes_allowed | 5 | 0 | -5 | The fail-open control allows all six proposals; 5 violate the independent safety invariant (viewer above LOW, any CRITICAL, operator HIGH in production). With the engine, 0 do. Admin restart remains allowed by configured policy. |
 
 ## Method and limitations
 

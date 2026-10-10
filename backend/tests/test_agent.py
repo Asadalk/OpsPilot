@@ -173,3 +173,60 @@ def test_ambiguous_incident_compares_hypotheses_before_diagnosis(database_path):
             (state.run_id,),
         ).fetchone()["hypothesis_history"]
     assert len(history) == 3
+
+def test_gemini_schema_declares_every_read_tool_argument():
+    from app.agent.provider import TOOL_ARGUMENTS_SCHEMA
+    from app.tools.registry import build_default_tools
+
+    declared = set(TOOL_ARGUMENTS_SCHEMA["properties"])
+    for tool in build_default_tools("postgresql://unused").values():
+        if tool.kind == "read":
+            assert set(tool.input_schema.model_fields) <= declared, tool.name
+
+
+def test_gemini_provider_passes_model_arguments_to_decision(monkeypatch):
+    import json
+    import sys
+    import types
+
+    from app.agent.provider import GeminiDecisionProvider
+    from app.agent.schemas import AgentState
+    from app.core.config import settings
+
+    payload = {"action": "call_tool", "tool_name": "search_logs", "hypotheses": [],
+               "arguments": {"service": "payments-api", "query": "timeout", "level": None}}
+
+    class FakeModels:
+        async def generate_content(self, **_):
+            return types.SimpleNamespace(text=json.dumps(payload), usage_metadata=None)
+
+    class FakeClient:
+        def __init__(self, **_):
+            self.aio = types.SimpleNamespace(models=FakeModels())
+
+    fake_genai = types.ModuleType("google.genai")
+    fake_genai.Client = FakeClient
+    fake_genai.types = types.SimpleNamespace(HttpOptions=lambda **_: None)
+    monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
+    monkeypatch.setitem(sys.modules, "google.genai.types", fake_genai.types)
+    import google
+    monkeypatch.setattr(google, "genai", fake_genai, raising=False)
+    import dataclasses
+    import app.agent.provider as provider_module
+    monkeypatch.setattr(provider_module, "settings", dataclasses.replace(settings, gemini_api_key="test-key"))
+
+    import asyncio
+    from uuid import uuid4
+    decision = asyncio.run(GeminiDecisionProvider("test-model").decide(
+        AgentState(run_id=uuid4(), user_request="Why is payments-api slow?"), []))
+    assert decision.arguments == {"service": "payments-api", "query": "timeout"}
+
+
+def test_gemini_schema_limits_proposals_to_known_action_types():
+    from typing import get_args
+
+    from app.actions.schemas import ActionType
+    from app.agent.provider import GeminiDecisionProvider
+
+    proposal = GeminiDecisionProvider.response_schema["properties"]["proposed_action"]["properties"]
+    assert proposal["action_type"]["enum"] == list(get_args(ActionType))

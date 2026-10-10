@@ -7,6 +7,8 @@ from app.rag.repository import KnowledgeRepository
 
 
 def ingest_directory(knowledge_dir: Path, database_url: str = settings.database_url) -> int:
+    if not knowledge_dir.is_dir():
+        raise FileNotFoundError(f"Knowledge directory not found: {knowledge_dir}")
     repository = KnowledgeRepository(database_url)
     ingested = 0
     for path in sorted(knowledge_dir.glob("**/*.md")):

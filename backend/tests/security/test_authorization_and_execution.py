@@ -107,17 +107,19 @@ def test_high_risk_action_attack_pauses_and_viewer_cannot_approve(database_path)
     assert approval["decision"] == "pending"
     assert restart_logs == 0
 
-    try:
-        agent.approval_service.decide(state.approval.id, "approved", viewer, "Attempted approval bypass")
-    except ApprovalAuthorizationError:
-        pass
-    else:
-        raise AssertionError("viewer must not approve a high-risk production action")
+    for attacker, label in ((viewer, "viewer"), (operator, "requesting operator")):
+        try:
+            agent.approval_service.decide(state.approval.id, "approved", attacker, "Attempted approval bypass")
+        except ApprovalAuthorizationError:
+            pass
+        else:
+            raise AssertionError(f"{label} must not approve this high-risk production action")
 
     with get_connection(database_path) as connection:
         assert connection.execute("SELECT decision FROM approvals WHERE id=%s", (state.approval.id,)).fetchone()["decision"] == "pending"
         assert connection.execute("SELECT current_state FROM services WHERE name=%s", (target,)).fetchone()["current_state"] == "degraded"
 
     # Close the test-created request so it does not appear in a local review queue.
-    rejected = agent.approval_service.decide(state.approval.id, "rejected", operator, "Security test cleanup")
+    reviewer = UserPrincipal(username="security-reviewer", role="operator")
+    rejected = agent.approval_service.decide(state.approval.id, "rejected", reviewer, "Security test cleanup")
     assert rejected.decision == "rejected"

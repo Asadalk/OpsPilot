@@ -8,13 +8,23 @@ from app.actions.schemas import ActionProposal, SimulatorActionResult, Simulator
 MAX_AUTOMATIC_ATTEMPTS = 2
 
 
+# Which action clears each hidden fault. Dependency faults are not fixed by acting on
+# the affected service itself, so restart and rollback both fail verification there.
+EXECUTABLE_ACTIONS = ("restart_service", "rollback_deployment")
+FIXED_BY: dict[str, str] = {
+    "connection_pool_exhaustion": "restart_service",
+    "process_crash": "restart_service",
+    "bad_deployment": "rollback_deployment",
+}
+
+
 class SimulatorActionRepository:
     """Apply and verify an approved action inside the caller's DB transaction."""
 
     def execute(self, connection: psycopg.Connection, proposal: ActionProposal) -> dict[str, Any]:
         service_name = proposal.target.split("@", 1)[0]
         service = connection.execute(
-            "SELECT id, name, current_state FROM services WHERE name = %s FOR UPDATE",
+            "SELECT id, name, current_state, fault FROM services WHERE name = %s FOR UPDATE",
             (service_name,),
         ).fetchone()
         if service is None:
@@ -25,7 +35,7 @@ class SimulatorActionRepository:
         verification_status = "INCONCLUSIVE"
         for attempt_number in range(1, MAX_AUTOMATIC_ATTEMPTS + 1):
             before = self._snapshot(connection, service["id"])
-            execution = self._apply(connection, proposal, service["id"], before)
+            execution = self._apply(connection, proposal, service["id"], before, service["fault"])
             after = self._snapshot(connection, service["id"])
             verification_status, final_reason = self._verify(before, after, execution)
             attempt = {
@@ -96,12 +106,15 @@ class SimulatorActionRepository:
             "latest_deployment": dict(deployment) if deployment else None,
         }).model_dump(mode="json")
 
-    def _apply(self, connection: psycopg.Connection, proposal: ActionProposal, service_id: int, before: dict) -> dict[str, Any]:
+    def _apply(self, connection: psycopg.Connection, proposal: ActionProposal, service_id: int, before: dict,
+               fault: str | None = None) -> dict[str, Any]:
         if proposal.action_type == "restart_service":
-            connection.execute("UPDATE services SET current_state = 'healthy' WHERE id = %s", (service_id,))
-            self._lower_metrics(connection, service_id, before["metrics"])
+            if fault is not None and FIXED_BY.get(fault) != "restart_service":
+                self._record_log(connection, service_id, "Simulated restart completed; symptoms persist.")
+                return {"applied": True, "operation": "restart_service", "fault_cleared": False}
+            self._heal(connection, service_id, before)
             self._record_log(connection, service_id, "Simulated restart completed.")
-            return {"applied": True, "operation": "restart_service"}
+            return {"applied": True, "operation": "restart_service", "fault_cleared": True}
 
         if proposal.action_type == "rollback_deployment":
             deployments = connection.execute(
@@ -124,17 +137,24 @@ class SimulatorActionRepository:
                 "UPDATE deployments SET status = 'rolled_back' WHERE deployment_id = %s",
                 (current["deployment_id"],),
             )
-            connection.execute("UPDATE services SET current_state = 'healthy' WHERE id = %s", (service_id,))
-            self._lower_metrics(connection, service_id, before["metrics"])
-            self._record_log(connection, service_id, f"Simulated rollback to {previous_success['version']} completed.")
+            fault_cleared = fault is None or FIXED_BY.get(fault) == "rollback_deployment"
+            if fault_cleared:
+                self._heal(connection, service_id, before)
+            suffix = "" if fault_cleared else "; symptoms persist"
+            self._record_log(connection, service_id, f"Simulated rollback to {previous_success['version']} completed{suffix}.")
             return {
                 "applied": True,
                 "operation": "rollback_deployment",
                 "rolled_back_version": current["version"],
                 "restored_version": previous_success["version"],
+                "fault_cleared": fault_cleared,
             }
 
         return {"applied": False, "operation": proposal.action_type, "reason": "Action is not supported by the simulator."}
+
+    def _heal(self, connection: psycopg.Connection, service_id: int, before: dict) -> None:
+        connection.execute("UPDATE services SET current_state = 'healthy', fault = NULL WHERE id = %s", (service_id,))
+        self._lower_metrics(connection, service_id, before["metrics"])
 
     @staticmethod
     def _lower_metrics(connection: psycopg.Connection, service_id: int, metrics: dict[str, float]) -> None:
