@@ -25,6 +25,8 @@ class Settings:
     llm_provider: str = os.getenv("LLM_PROVIDER", "groq").strip().lower()
     groq_api_key: str = os.getenv("GROQ_API_KEY", "")
     groq_model: str = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+    # Client-side pacing to the account's tokens-per-minute limit (Groq free tier: 8000); 0 disables it.
+    groq_tokens_per_minute: int = int(os.getenv("GROQ_TOKENS_PER_MINUTE", "8000"))
     gemini_api_key: str = os.getenv("GEMINI_API_KEY", "")
     gemini_timeout_seconds: int = _parse_timeout(os.getenv("GEMINI_TIMEOUT_SECONDS", "25"))
     llm_timeout_seconds: int = _parse_timeout(os.getenv("LLM_TIMEOUT_SECONDS", os.getenv("GEMINI_TIMEOUT_SECONDS", "25")))

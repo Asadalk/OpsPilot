@@ -230,7 +230,8 @@ class OpsAgent:
         for attempt in range(1, MAX_TRANSIENT_ATTEMPTS + 1):
             try:
                 decision = await asyncio.wait_for(
-                    self.provider.decide(state, descriptions), timeout=self.llm_timeout_seconds
+                    self.provider.decide(state, descriptions),
+                    timeout=self.llm_timeout_seconds + getattr(self.provider, "max_wait_seconds", 0),
                 )
             except Exception as exc:
                 last_error = exc

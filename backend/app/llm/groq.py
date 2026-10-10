@@ -3,12 +3,34 @@
 Groq exposes an OpenAI-compatible HTTP API, so a direct httpx call is enough; no SDK
 is added. The caller supplies a strict JSON schema and validates the parsed result.
 """
+import asyncio
 import json
+import time
+from collections import deque
 from typing import Any
 
 import httpx
 
 GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
+
+
+# Tokens spent per call in the last minute: [monotonic start, tokens]. Waiting here
+# before a call keeps us under the account's tokens-per-minute limit instead of
+# collecting 429s. One process, sequential calls; concurrent callers may still race.
+_RECENT_CALLS: deque[list[float]] = deque()
+
+
+async def _wait_for_token_budget(estimate: int, tokens_per_minute: int) -> list[float]:
+    while True:
+        now = time.monotonic()
+        while _RECENT_CALLS and now - _RECENT_CALLS[0][0] >= 60:
+            _RECENT_CALLS.popleft()
+        used = sum(tokens for _, tokens in _RECENT_CALLS)
+        if tokens_per_minute <= 0 or not _RECENT_CALLS or used + estimate <= tokens_per_minute:
+            entry = [now, float(estimate)]
+            _RECENT_CALLS.append(entry)
+            return entry
+        await asyncio.sleep(60 - (now - _RECENT_CALLS[0][0]) + 0.1)
 
 
 class GroqError(Exception):
@@ -36,6 +58,7 @@ async def chat_json(
     schema_name: str,
     timeout_seconds: float,
     transport: httpx.AsyncBaseTransport | None = None,
+    tokens_per_minute: int = 0,
 ) -> tuple[Any, dict[str, int | None]]:
     """Return (parsed JSON, token usage) for one schema-constrained completion."""
     if not api_key.strip():
@@ -53,6 +76,8 @@ async def chat_json(
             "json_schema": {"name": schema_name, "strict": False, "schema": schema},
         },
     }
+    # Rough estimate (4 characters per token plus room for output); replaced by actual usage below.
+    budget = await _wait_for_token_budget(len(prompt) // 4 + 800, tokens_per_minute)
     async with httpx.AsyncClient(timeout=timeout_seconds, transport=transport) as client:
         try:
             response = await client.post(GROQ_CHAT_URL, json=payload,
@@ -68,6 +93,7 @@ async def chat_json(
         raise error
     body = response.json()
     usage = body.get("usage") or {}
+    budget[1] = float(usage.get("total_tokens") or budget[1])
     content = body["choices"][0]["message"]["content"]
     return json.loads(content), {
         "input_tokens": usage.get("prompt_tokens"),

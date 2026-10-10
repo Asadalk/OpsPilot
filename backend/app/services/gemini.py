@@ -60,7 +60,8 @@ async def _extract_with_groq(prompt: str) -> list[dict[str, Any]]:
         try:
             data, _usage = await chat_json(api_key=settings.groq_api_key, model=settings.groq_model, prompt=prompt,
                                            schema=GROQ_TASKS_SCHEMA, schema_name="extracted_tasks",
-                                           timeout_seconds=settings.llm_timeout_seconds)
+                                           timeout_seconds=settings.llm_timeout_seconds,
+                                           tokens_per_minute=settings.groq_tokens_per_minute)
             return [ExtractedTask.model_validate(item).model_dump() for item in data["tasks"]]
         except (GroqError, TimeoutError, ConnectionError) as exc:
             last_error = exc

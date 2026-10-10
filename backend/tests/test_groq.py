@@ -169,3 +169,25 @@ def test_groq_schema_limits_tool_name_to_advertised_read_tools():
     assert call["properties"]["tool_name"]["enum"] == ["get_metrics", "search_logs"]
     assert set(call["required"]) == {"action", "tool_name", "arguments"}
     assert set(diagnose["required"]) == {"action", "diagnosis"}
+
+
+def test_token_budget_waits_until_the_minute_window_has_room(monkeypatch):
+    import app.llm.groq as groq_module
+
+    clock = {"now": 1000.0}
+    waits = []
+
+    async def fake_sleep(seconds):
+        waits.append(round(seconds, 1))
+        clock["now"] += seconds
+
+    monkeypatch.setattr(groq_module.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(groq_module.asyncio, "sleep", fake_sleep)
+    monkeypatch.setattr(groq_module, "_RECENT_CALLS", groq_module.deque())
+
+    asyncio.run(groq_module._wait_for_token_budget(5000, 8000))
+    clock["now"] += 10
+    asyncio.run(groq_module._wait_for_token_budget(5000, 8000))  # 10000 > 8000: waits for the first to age out
+    assert waits == [50.1]
+    asyncio.run(groq_module._wait_for_token_budget(5000, 0))  # pacing disabled
+    assert waits == [50.1]
