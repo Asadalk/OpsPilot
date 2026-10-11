@@ -37,7 +37,7 @@ from app.agent.schemas import AgentDecision
 from app.approval.service import SimulatedActionExecutor
 from app.auth.schemas import UserPrincipal
 from app.benchmarks.opsbench import BACKEND_ROOT, DEFAULT_DATASET, load_dataset
-from app.benchmarks.rule_agent import EVIDENCE_TOOLS, RuleBasedDecisionProvider, target_service
+from app.agent.scripted import EVIDENCE_TOOLS, RuleBasedDecisionProvider, target_service
 from app.benchmarks.scoring import score, summarize
 from app.benchmarks.worlds import load_world
 from app.core.config import settings

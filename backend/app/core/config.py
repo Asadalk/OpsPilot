@@ -21,8 +21,10 @@ class Settings:
         "DATABASE_URL",
         "postgresql://opspilot:opspilot@localhost:5433/opspilot",
     )
-    # Which hosted model backs the agent and task extraction: "groq" or "gemini".
+    # Which model backs the agent and task extraction: "groq", "gemini", or "mock" (offline,
+    # deterministic; used for the keyless demo and failure injection).
     llm_provider: str = os.getenv("LLM_PROVIDER", "groq").strip().lower()
+    mock_llm_mode: str = os.getenv("MOCK_LLM_MODE", "normal").strip().lower()
     groq_api_key: str = os.getenv("GROQ_API_KEY", "")
     groq_model: str = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
     # Client-side pacing to the account's tokens-per-minute limit (Groq free tier: 8000); 0 disables it.

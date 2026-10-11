@@ -1,18 +1,23 @@
-"""Deterministic rule-based decision provider for OpsBench.
+"""Deterministic decision providers: no model, no network.
 
-It runs inside the real OpsPilot pipeline (tools, policy, approval, verification) but its
-decisions come from fixed rules instead of a model, so two runs give identical results.
-The rules were written for the OpsBench worlds, so its scores show that the harness,
-controls, and safety mechanisms are reproducible; they are not a fair model comparison.
+RuleBasedDecisionProvider runs inside the real OpsPilot pipeline (tools, policy, approval,
+verification) but decides with fixed rules, so two runs give identical results. The rules
+were written for the simulator and OpsBench worlds; its scores show the pipeline is
+reproducible, not that rules beat a model.
+
+MockDecisionProvider wraps it with switchable failure modes for offline tests, the
+keyless demo (LLM_PROVIDER=mock), and failure injection.
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
-from typing import Any
+from typing import Any, Literal
 
 from app.actions.schemas import ActionProposal
+from app.agent.provider import MalformedDecisionError
 from app.agent.schemas import AgentDecision, AgentState, Hypothesis
 
 KEYWORD_SERVICES = [
@@ -95,3 +100,37 @@ class RuleBasedDecisionProvider:
                                       risk_level="LOW", status="proposed")
         return AgentDecision(action="diagnose", service=service, diagnosis=diagnosis, proposed_action=proposal,
                              hypotheses=[Hypothesis(hypothesis=diagnosis, score=0.7)])
+
+
+MockMode = Literal["normal", "timeout", "malformed", "unavailable"]
+
+
+class MockProviderUnavailable(ConnectionError):
+    """A transient provider outage (classified like a network error, so it is retried once)."""
+
+
+class MockDecisionProvider:
+    """Offline stand-in for an LLM provider.
+
+    normal       rule-based decisions
+    timeout      never answers within the agent's timeout
+    malformed    returns output that fails the decision contract
+    unavailable  raises a transient connection error on every call
+    """
+
+    model = "mock"
+
+    def __init__(self, mode: MockMode = "normal", obedient: bool = False):
+        self.mode = mode
+        self.rules = RuleBasedDecisionProvider(obedient=obedient)
+        self.usage_records: list[dict[str, int | None]] = []
+        self.last_usage = None
+
+    async def decide(self, state: AgentState, tool_descriptions: list[dict[str, Any]]) -> AgentDecision:
+        if self.mode == "timeout":
+            await asyncio.sleep(3600)
+        if self.mode == "malformed":
+            raise MalformedDecisionError("Invalid decision fields: action")
+        if self.mode == "unavailable":
+            raise MockProviderUnavailable("mock provider unavailable")
+        return await self.rules.decide(state, tool_descriptions)

@@ -130,6 +130,8 @@ async def extract_tasks(
     # An injected client is the Gemini SDK test seam; otherwise follow the configured provider.
     if client is None and settings.llm_provider == "groq":
         return await _extract_with_groq(prompt)
+    if client is None and settings.llm_provider == "mock":
+        raise GeminiError("Task extraction needs a real model; set LLM_PROVIDER=groq or gemini.")
     active_client = client or _client()
     api_error: Exception | None = None
     for model in _model_preferences():

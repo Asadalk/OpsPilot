@@ -267,8 +267,13 @@ class GroqDecisionProvider:
 
 
 def build_decision_provider() -> DecisionProvider:
+    """The only place that picks a concrete provider; the agent sees the DecisionProvider interface."""
     if settings.llm_provider == "gemini":
         return GeminiDecisionProvider()
     if settings.llm_provider == "groq":
         return GroqDecisionProvider()
+    if settings.llm_provider == "mock":
+        from app.agent.scripted import MockDecisionProvider
+
+        return MockDecisionProvider(settings.mock_llm_mode)
     raise ValueError(f"Unsupported LLM_PROVIDER: {settings.llm_provider}")
