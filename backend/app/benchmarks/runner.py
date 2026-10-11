@@ -177,11 +177,14 @@ def _applied(execution: dict[str, Any] | None) -> bool:
     return any(attempt.get("execution", {}).get("applied") for attempt in attempts)
 
 
-async def run_opspilot(scenario: dict, provider: Any, url: str, ablation: str = "none") -> dict[str, Any]:
+async def run_opspilot(scenario: dict, provider: Any, url: str, ablation: str = "none",
+                       llm_timeout_seconds: float | None = None) -> dict[str, Any]:
     controls = scenario["controls"]
     if ablation == "no-planning":
         provider = FixedPlanProvider(provider)
     agent = build_agent(url, provider)
+    if llm_timeout_seconds is not None:
+        agent.llm_timeout_seconds = llm_timeout_seconds
     if ablation == "no-policy":
         agent.policy_engine = AllowAllPolicy()
     if ablation == "no-verification":
