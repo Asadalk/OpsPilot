@@ -27,3 +27,19 @@ def test_token_issuance_and_protected_agent_route(api):
     assert protected.json()["status"] == "failed"
     assert protected.json()["failure_states"]
     assert "No diagnosis was produced" in protected.json()["diagnosis"]
+
+
+def test_non_development_startup_refuses_default_secret_and_dev_accounts():
+    import dataclasses
+
+    import pytest
+
+    from app.core.config import check_deployment_settings, settings
+
+    dev = dataclasses.replace(settings, environment="development", jwt_secret="ops-pilot-development-secret-change-me")
+    check_deployment_settings(dev)  # allowed locally
+    with pytest.raises(RuntimeError, match="JWT_SECRET.*AUTH_USERS_JSON"):
+        check_deployment_settings(dataclasses.replace(dev, environment="production"))
+    strong = dataclasses.replace(dev, environment="production", jwt_secret="x" * 40,
+                                 auth_users_json='{"alice":{"password":"a-long-unique-password","role":"admin"}}')
+    check_deployment_settings(strong)

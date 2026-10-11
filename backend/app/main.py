@@ -14,7 +14,7 @@ from app.api.routes.approvals import build_approval_router
 from app.api.routes.audit import build_audit_router
 from app.agent.agent import build_agent
 from app.agent.provider import build_decision_provider
-from app.core.config import settings
+from app.core.config import check_deployment_settings, settings
 from app.core.customer import load_customer_config
 from app.db.database import init_db
 from app.db.repositories import TaskRepository
@@ -32,6 +32,7 @@ ops_agent = build_agent(settings.database_url, build_decision_provider(), custom
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    check_deployment_settings(settings)
     init_db(settings.database_url)
     if settings.knowledge_dir:
         count = ingest_directory(Path(settings.knowledge_dir), settings.database_url)

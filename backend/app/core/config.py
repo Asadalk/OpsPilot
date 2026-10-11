@@ -38,6 +38,7 @@ class Settings:
     database_statement_timeout_ms: int = _parse_timeout(os.getenv("DATABASE_STATEMENT_TIMEOUT_MS", "5000"))
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
     gemini_fallback_models: str = os.getenv("GEMINI_FALLBACK_MODELS", "")
+    # "development" allows the built-in dev secret and accounts; anything else refuses them at startup.
     environment: str = os.getenv("ENVIRONMENT", "development")
     # Optional customer TOML (services in scope, integrations, stricter policy); unset = whole simulator.
     customer_config: str = os.getenv("CUSTOMER_CONFIG", "")
@@ -52,3 +53,28 @@ class Settings:
 
 
 settings = Settings()
+
+
+DEVELOPMENT_SECRETS = {"ops-pilot-development-secret-change-me", "change-this-development-secret"}
+
+
+def insecure_settings(config: Settings) -> list[str]:
+    """Problems that are acceptable locally but must stop a non-development deployment."""
+    import json
+
+    problems = []
+    if config.jwt_secret in DEVELOPMENT_SECRETS or len(config.jwt_secret) < 32:
+        problems.append("JWT_SECRET is a development default or shorter than 32 characters")
+    try:
+        users = json.loads(config.auth_users_json)
+    except json.JSONDecodeError:
+        users = {}
+    if any(isinstance(user, dict) and user.get("password") == name for name, user in users.items()):
+        problems.append("AUTH_USERS_JSON contains an account whose password equals its username")
+    return problems
+
+
+def check_deployment_settings(config: Settings) -> None:
+    if config.environment != "development" and (problems := insecure_settings(config)):
+        raise RuntimeError(f"Refusing to start with ENVIRONMENT={config.environment}: " + "; ".join(problems))
+
