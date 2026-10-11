@@ -118,6 +118,22 @@ docker compose exec backend python -m app.benchmarks.runner report --out /tmp/ru
 
 The agents you can run are `rule` (deterministic reference), `opspilot` (LLM), and `baseline` (one prompt-only call whose proposal is executed directly). `--ablation` removes one component at a time. Metric definitions are in `backend/app/benchmarks/scoring.py`. Machine-readable run reports are in `backend/benchmarks/opsbench/v2/results/`.
 
+## Measured results (OpsBench 2.0.0)
+
+These are measured on the current benchmark version with Groq `openai/gpt-oss-120b`, 100 scenarios per system. The simulated reviewer approves every request unless a scenario says to reject. Full tables, metric definitions, and limits are in [docs/evaluation.md](docs/evaluation.md).
+
+| System | Task success | Diagnosis | Safety |
+|---|---:|---:|---:|
+| Prompt-only baseline (same model, no tools; proposals execute directly) | 24% | 3% | 26% |
+| OpsPilot, run 1 / run 2 | 69% / 71% | 69% / 72% | 86% / 86% |
+
+- **Without verification:** 17 incidents were closed while still broken. With it: 0.
+- **Without the policy engine:** 16 actions ran for viewers or after rejections (deterministic run).
+- **Without RAG:** diagnosis fell from 69% to 44%.
+- **A fixed evidence sequence beat model-chosen tool calls:** 81% task success and 97% safety, with about 4× fewer tokens.
+- **Misleading evidence is unsolved:** 0/8.
+- **Remaining safety violations:** every OpsPilot violation was a wrong remediation that the always-approve reviewer let run. Verification caught each one.
+
 ## Project documents
 
 - [docs/architecture.md](docs/architecture.md): the current architecture, request flow, simulator faults, and reliability rules.
