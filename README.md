@@ -92,15 +92,11 @@ docker compose exec backend python -m app.benchmarks.runner run --agent opspilot
 docker compose exec backend python -m app.benchmarks.runner report --out /tmp/run
 ```
 
-The agents you can run are `rule` (deterministic reference), `opspilot` (LLM), and `baseline` (one prompt-only call whose proposal is executed directly). `--ablation` removes one component at a time. Metric definitions are in `backend/app/benchmarks/scoring.py`. Results and their limits are in [docs/interview-defense/phase-19.md](docs/interview-defense/phase-19.md) and [phase-20.md](docs/interview-defense/phase-20.md).
+The agents you can run are `rule` (deterministic reference), `opspilot` (LLM), and `baseline` (one prompt-only call whose proposal is executed directly). `--ablation` removes one component at a time. Metric definitions are in `backend/app/benchmarks/scoring.py`. Machine-readable run reports are in `backend/benchmarks/opsbench/v2/results/`.
 
 ## Project documents
 
-- [docs/architecture.md](docs/architecture.md): the current architecture.
-- [docs/BUILD-GATES.md](docs/BUILD-GATES.md): the evidence for each phase gate, plus the Phase 23 revalidation.
-- [docs/PHASE-LOG.md](docs/PHASE-LOG.md): a short history of each phase.
-- [docs/interview-defense/](docs/interview-defense/): per-phase notes covering design, failure modes, tradeoffs, and likely questions.
-- [docs/opspilot-context.md](docs/opspilot-context.md): the starting point, goals, and non-goals.
+- [docs/architecture.md](docs/architecture.md): the current architecture, request flow, simulator faults, and reliability rules.
 
 ## Limitations
 
@@ -128,5 +124,5 @@ backend/migrations/    ordered SQL migrations (001–016)
 backend/benchmarks/    OpsBench datasets and result artifacts
 knowledge/             runbooks, postmortems, architecture notes
 frontend/app/          Next.js pages
-docs/                  architecture, gates, phase log, interview notes
+docs/                  architecture documentation
 ```

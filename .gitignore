@@ -30,3 +30,9 @@ __pycache__/
 /.zshrc
 /.idea
 /.vscode
+
+# Personal project notes stay local (kept in .private/reference)
+/docs/interview-defense/
+/docs/BUILD-GATES.md
+/docs/PHASE-LOG.md
+/docs/opspilot-context.md
