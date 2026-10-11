@@ -39,6 +39,8 @@ class Settings:
     gemini_model: str = os.getenv("GEMINI_MODEL", "gemini-3.8-flash")
     gemini_fallback_models: str = os.getenv("GEMINI_FALLBACK_MODELS", "")
     environment: str = os.getenv("ENVIRONMENT", "development")
+    # Optional customer TOML (services in scope, integrations, stricter policy); unset = whole simulator.
+    customer_config: str = os.getenv("CUSTOMER_CONFIG", "")
     # When set, startup ingests this directory so retrieval never silently runs on an empty index.
     knowledge_dir: str = os.getenv("KNOWLEDGE_DIR", "")
     jwt_secret: str = os.getenv("JWT_SECRET", "ops-pilot-development-secret-change-me")

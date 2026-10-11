@@ -10,6 +10,7 @@ from app.approval.repository import ApprovalRepository
 from app.approval.service import ApprovalService
 from app.auth.schemas import UserPrincipal
 from app.core.config import settings
+from app.core.customer import DEFAULT_CUSTOMER, CustomerConfig
 from app.db.agent import AgentRepository, AgentRepositoryError
 from app.db.simulator import SimulatorRepository
 from app.db.simulator_actions import EXECUTABLE_ACTIONS
@@ -429,10 +430,11 @@ class OpsAgent:
         return "production"
 
 
-def build_agent(database_url: str, provider: DecisionProvider) -> OpsAgent:
+def build_agent(database_url: str, provider: DecisionProvider, customer: CustomerConfig = DEFAULT_CUSTOMER) -> OpsAgent:
+    """Customer settings reach only the tools and the policy engine, never the agent loop."""
     knowledge_repository = KnowledgeRepository(database_url)
     simulator_repository = SimulatorRepository(database_url)
     agent_repository = AgentRepository(database_url)
     approval_service = ApprovalService(ApprovalRepository(database_url))
-    return OpsAgent(agent_repository, provider, build_default_tools(database_url), knowledge_repository,
-                    simulator_repository, PolicyEngine(), approval_service)
+    return OpsAgent(agent_repository, provider, build_default_tools(database_url, customer), knowledge_repository,
+                    simulator_repository, PolicyEngine(customer), approval_service)

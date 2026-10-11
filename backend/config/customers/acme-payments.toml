@@ -1,0 +1,15 @@
+# Acme Payments: card-payment platform. Strict on production restarts.
+
+[customer]
+name = "Acme Payments"
+
+[services]
+# OpsPilot may investigate and act only on these simulator services.
+managed = ["payments-api", "checkout-api", "auth-api", "payments-worker"]
+
+[integrations]
+github = true
+
+[policies]
+# Every production restart needs a human approval, even for admins.
+production_restart_requires_approval = true

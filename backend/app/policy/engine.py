@@ -4,6 +4,7 @@ from pydantic import BaseModel
 
 from app.actions.schemas import ActionProposal, ActionType, RiskLevel
 from app.auth.schemas import UserPrincipal
+from app.core.customer import DEFAULT_CUSTOMER, CustomerConfig
 
 PolicyOutcome = Literal["allow", "deny", "require_approval"]
 
@@ -48,14 +49,28 @@ POLICY_RULES: dict[tuple[str, RiskLevel], tuple[PolicyOutcome, PolicyOutcome]] =
 
 
 class PolicyEngine:
+    def __init__(self, customer: CustomerConfig = DEFAULT_CUSTOMER):
+        self.customer = customer
+
     def evaluate(self, proposal: ActionProposal, principal: UserPrincipal, environment: str) -> PolicyDecision:
         # Risk comes from the server table, never from the model's proposal.
         risk = RISK_BY_ACTION[proposal.action_type]
         production_outcome, other_outcome = POLICY_RULES[(principal.role, risk)]
         outcome = production_outcome if environment == "production" else other_outcome
+        reason = f"{principal.role} policy evaluated {proposal.action_type} in {environment} as {risk} risk."
+        # Customer configuration can only make the decision stricter.
+        service = proposal.target.split("@", 1)[0]
+        if not self.customer.manages(service):
+            outcome, reason = "deny", f"{service} is not managed for customer {self.customer.name}."
+        elif proposal.action_type == "create_github_issue" and not self.customer.github_enabled:
+            outcome, reason = "deny", f"The GitHub integration is disabled for customer {self.customer.name}."
+        elif (self.customer.production_restart_requires_approval and outcome == "allow"
+              and proposal.action_type == "restart_service" and environment == "production"):
+            outcome = "require_approval"
+            reason += f" Customer {self.customer.name} requires approval for every production restart."
         return PolicyDecision(
             outcome=outcome,
-            reason=f"{principal.role} policy evaluated {proposal.action_type} in {environment} as {risk} risk.",
+            reason=reason,
             username=principal.username,
             role=principal.role,
             action_type=proposal.action_type,

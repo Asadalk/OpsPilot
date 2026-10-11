@@ -1,4 +1,5 @@
 from app.core.config import settings
+from app.core.customer import DEFAULT_CUSTOMER, CustomerConfig
 from app.db.simulator import SimulatorRepository
 from app.rag.repository import KnowledgeRepository
 from app.tools.base import Tool
@@ -13,15 +14,16 @@ from app.tools.operational import (
 )
 
 
-def build_default_tools(database_url: str = settings.database_url) -> dict[str, Tool]:
+def build_default_tools(database_url: str = settings.database_url,
+                        customer: CustomerConfig = DEFAULT_CUSTOMER) -> dict[str, Tool]:
     repository = SimulatorRepository(database_url)
     knowledge_repository = KnowledgeRepository(database_url)
     tools = [
-        GetServiceHealth(repository),
-        GetMetrics(repository),
-        SearchLogs(repository),
-        GetRecentDeployments(repository),
-        GetIncidentHistory(repository),
+        GetServiceHealth(repository, customer),
+        GetMetrics(repository, customer),
+        SearchLogs(repository, customer),
+        GetRecentDeployments(repository, customer),
+        GetIncidentHistory(repository, customer),
         SearchRunbooks(knowledge_repository),
         ProposeAction(),
     ]

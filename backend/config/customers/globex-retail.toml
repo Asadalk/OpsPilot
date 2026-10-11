@@ -1,0 +1,15 @@
+# Globex Retail: storefront and fulfilment. No GitHub integration.
+
+[customer]
+name = "Globex Retail"
+
+[services]
+managed = ["checkout-api", "inventory-api", "notification-api", "orders-api", "catalog-api", "auth-api"]
+
+[integrations]
+# Issues are tracked outside GitHub, so issue proposals are denied.
+github = false
+
+[policies]
+# Default rules: operators need approval for HIGH-risk production actions; admins do not.
+production_restart_requires_approval = false

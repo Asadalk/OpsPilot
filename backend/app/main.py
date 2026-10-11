@@ -15,6 +15,7 @@ from app.api.routes.audit import build_audit_router
 from app.agent.agent import build_agent
 from app.agent.provider import build_decision_provider
 from app.core.config import settings
+from app.core.customer import load_customer_config
 from app.db.database import init_db
 from app.db.repositories import TaskRepository
 from app.db.simulator import SimulatorRepository
@@ -25,7 +26,8 @@ from app.services.tasks import TaskService
 
 task_service = TaskService(TaskRepository(settings.database_url))
 simulator_service = SimulatorService(SimulatorRepository(settings.database_url))
-ops_agent = build_agent(settings.database_url, build_decision_provider())
+customer = load_customer_config(settings.customer_config)
+ops_agent = build_agent(settings.database_url, build_decision_provider(), customer)
 
 
 @asynccontextmanager
@@ -51,6 +53,13 @@ app.add_middleware(
 @app.get("/health")
 async def health() -> dict[str, str]:
     return {"status": "ok", "service": "ops-pilot-api"}
+
+
+@app.get("/customer")
+async def read_customer() -> dict[str, object]:
+    return {"name": customer.name, "managed_services": sorted(customer.managed_services or []) or None,
+            "github_enabled": customer.github_enabled,
+            "production_restart_requires_approval": customer.production_restart_requires_approval}
 
 
 @app.get("/")

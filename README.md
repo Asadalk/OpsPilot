@@ -66,6 +66,8 @@ Open http://localhost:3000 and sign in as `operator`/`operator`. Other developme
 
 Open an incident and choose **Start agent investigation**. A HIGH-risk production proposal pauses for approval; sign in as `admin` to approve it.
 
+To run as a specific customer, set `CUSTOMER_CONFIG` (for example `/app/config/customers/acme-payments.toml`) in `backend/.env`. A customer file limits the services OpsPilot may touch, switches integrations on or off, and can only make policy stricter. Examples are in `backend/config/customers/`. Without one, the whole simulator is in scope.
+
 The API is at http://localhost:8000 (`/health`). PostgreSQL data persists in the `postgres_data` volume across `docker compose down` and `docker compose up`.
 
 ## Tests

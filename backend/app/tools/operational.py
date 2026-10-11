@@ -1,3 +1,4 @@
+from app.core.customer import DEFAULT_CUSTOMER, CustomerConfig
 from app.db.simulator import ServiceNotFoundError, SimulatorRepository, SimulatorRepositoryError
 from app.rag.repository import KnowledgeRepository, KnowledgeRepositoryError
 from app.tools.base import Tool, ToolExecutionError
@@ -18,10 +19,13 @@ from app.tools.schemas import (
 
 class OperationalTool(Tool):
     kind = "read"
-    def __init__(self, repository: SimulatorRepository):
+    def __init__(self, repository: SimulatorRepository, customer: CustomerConfig = DEFAULT_CUSTOMER):
         self.repository = repository
+        self.customer = customer
 
     def service_id(self, service: str) -> int:
+        if not self.customer.manages(service):
+            raise ToolExecutionError(f"Service not managed for customer {self.customer.name}: {service}")
         try:
             return self.repository.get_service_id(service)
         except ServiceNotFoundError as exc:

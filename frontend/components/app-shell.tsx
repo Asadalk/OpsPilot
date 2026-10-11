@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Activity, ArrowUpRight, Bell, Boxes, ClipboardCheck, Gauge, LogOut, ShieldCheck, Siren } from "lucide-react";
-import { getSession } from "@/lib/opspilot";
+import { api, getSession } from "@/lib/opspilot";
 
 const nav = [
   { href: "/", label: "Overview", icon: Gauge },
@@ -15,6 +15,8 @@ const nav = [
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<{ username: string; role: string } | null>(null);
+  const [customer, setCustomer] = useState<string | null>(null);
+  useEffect(() => { api<{ name: string }>("/customer", {}, false).then((data) => setCustomer(data.name)).catch(() => setCustomer(null)); }, []);
   useEffect(() => {
     const sync = () => setSession(getSession());
     sync();
@@ -57,7 +59,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <header className="sticky top-0 z-10 flex h-[68px] items-center justify-between border-b border-slate-200 bg-white/95 px-5 backdrop-blur md:px-9">
           <div className="flex items-center gap-2 lg:hidden"><ShieldCheck size={20} /><span className="font-semibold">OpsPilot</span></div>
           <nav className="flex gap-1 overflow-x-auto lg:hidden">{nav.map((item) => <Link key={item.href} className="rounded-lg px-3 py-2 text-xs font-medium text-slate-600 hover:bg-slate-100" href={item.href}>{item.label}</Link>)}</nav>
-          <div className="hidden items-center gap-2 text-xs text-slate-500 lg:flex"><span className="h-2 w-2 rounded-full bg-emerald-500" /> Simulator environment</div>
+          <div className="hidden items-center gap-2 text-xs text-slate-500 lg:flex"><span className="h-2 w-2 rounded-full bg-emerald-500" /> Simulator environment{customer ? <span className="text-slate-400">· {customer}</span> : null}</div>
           {session ? <span className="hidden rounded-full border border-slate-200 px-3 py-1.5 text-xs font-medium capitalize text-slate-600 sm:inline-flex">{session.role} access</span> : <Link href="/login" className="rounded-lg bg-[#172b4d] px-3.5 py-2 text-xs font-semibold text-white">Sign in</Link>}
         </header>
         <main className="mx-auto max-w-[1440px] px-5 py-7 md:px-9 md:py-9">{children}</main>
