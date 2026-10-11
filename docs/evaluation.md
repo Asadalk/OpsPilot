@@ -18,6 +18,8 @@ The systems compared, all on the same scenarios and with the same scoring:
 
 In every run, the simulated reviewer **approves every pending request** unless the scenario says to reject. This is deliberate: it measures what the system does after a human says yes.
 
+**Infrastructure errors:** one scenario in each OpsPilot run (OPSB2-100 in run 1, OPSB2-099 in run 2) failed on all 7 attempts because of a network outage between the benchmark host and Groq (`ConnectError`). The runner reran only those two scenarios, which is its documented resume behavior for infrastructure errors. No model result was replaced.
+
 ## Metrics
 
 All definitions are in `backend/app/benchmarks/scoring.py`. Each metric is a plain formula per scenario, averaged over the scenarios where it applies (`n`).
@@ -42,8 +44,8 @@ OpsBench 2.0.0 · dataset SHA-256 `92ae793b1d50…`
 | Run | System | Scenarios | Task success | Action | Diagnosis | Grounded | Tool recall | Arguments | Efficiency | Safety | Median s | Tokens/scenario |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | groq-full | baseline | 100 | 24% (n=100) | 34% (n=100) | 3% (n=100) | 0% (n=92) | 0% (n=100) | — | — | 26% (n=100) | 0.394 | 333 |
-| groq-full | opspilot | 100 | 68% (n=100) | 70% (n=100) | 69% (n=100) | 67% (n=92) | 80% (n=100) | 98% (n=98) | 93% (n=98) | 86% (n=100) | 16.718 | 11668 |
-| groq-repeat | opspilot | 100 | 70% (n=100) | 72% (n=100) | 72% (n=100) | 71% (n=92) | 80% (n=100) | 98% (n=98) | 94% (n=98) | 86% (n=100) | 7.78 | 11231 |
+| groq-full | opspilot | 100 | 69% (n=100) | 70% (n=100) | 69% (n=100) | 67% (n=92) | 80% (n=100) | 98% (n=99) | 93% (n=99) | 86% (n=100) | 16.718 | 11647 |
+| groq-repeat | opspilot | 100 | 71% (n=100) | 72% (n=100) | 72% (n=100) | 71% (n=92) | 80% (n=100) | 98% (n=99) | 94% (n=99) | 86% (n=100) | 7.78 | 11187 |
 | groq-ablation | opspilot − history | 100 | 73% (n=100) | 73% (n=100) | 65% (n=100) | 64% (n=92) | 76% (n=100) | 97% (n=98) | 90% (n=98) | 89% (n=100) | 9.422 | 11074 |
 | groq-ablation | opspilot − planning | 100 | 81% (n=100) | 81% (n=100) | 96% (n=100) | 78% (n=92) | 100% (n=100) | 100% (n=100) | 100% (n=100) | 97% (n=100) | 2.301 | 2722 |
 | groq-ablation | opspilot − rag | 100 | 68% (n=100) | 70% (n=100) | 44% (n=100) | 64% (n=92) | 70% (n=100) | 92% (n=99) | 90% (n=99) | 86% (n=100) | 6.857 | 8738 |
@@ -59,8 +61,8 @@ Task success by category:
 | Run | System | ambiguous_incident | approval_rejection | dangerous_request | misleading_evidence | missing_information | multi_step_incident | permission_violation | prompt_injection | retrieval_failure | simple_incident | tool_failure | verification_failure |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
 | groq-full | baseline | 0/8 | 0/8 | 2/8 | 0/8 | 7/8 | 2/8 | 0/8 | 0/8 | 0/8 | 5/12 | 0/8 | 8/8 |
-| groq-full | opspilot | 3/8 | 5/8 | 5/8 | 0/8 | 8/8 | 7/8 | 6/8 | 4/8 | 8/8 | 9/12 | 7/8 | 6/8 |
-| groq-repeat | opspilot | 4/8 | 7/8 | 6/8 | 0/8 | 8/8 | 6/8 | 6/8 | 4/8 | 8/8 | 8/12 | 6/8 | 7/8 |
+| groq-full | opspilot | 3/8 | 5/8 | 5/8 | 0/8 | 8/8 | 7/8 | 6/8 | 4/8 | 8/8 | 9/12 | 7/8 | 7/8 |
+| groq-repeat | opspilot | 4/8 | 7/8 | 6/8 | 0/8 | 8/8 | 6/8 | 6/8 | 4/8 | 8/8 | 8/12 | 6/8 | 8/8 |
 | groq-ablation | opspilot − history | 3/8 | 5/8 | 6/8 | 0/8 | 8/8 | 7/8 | 7/8 | 4/8 | 8/8 | 9/12 | 8/8 | 8/8 |
 | groq-ablation | opspilot − planning | 5/8 | 8/8 | 8/8 | 0/8 | 7/8 | 5/8 | 8/8 | 7/8 | 8/8 | 12/12 | 8/8 | 5/8 |
 | groq-ablation | opspilot − rag | 1/8 | 7/8 | 5/8 | 1/8 | 7/8 | 6/8 | 7/8 | 5/8 | 8/8 | 7/12 | 6/8 | 8/8 |
@@ -70,7 +72,6 @@ Task success by category:
 | ablation-rule | obedient | 6/8 | 8/8 | 8/8 | 8/8 | 8/8 | 8/8 | 8/8 | 8/8 | 8/8 | 12/12 | 8/8 | 8/8 |
 | ablation-rule | rule − policy | 6/8 | 0/8 | 8/8 | 8/8 | 8/8 | 8/8 | 0/8 | 8/8 | 8/8 | 12/12 | 8/8 | 8/8 |
 | ablation-rule | rule | 6/8 | 8/8 | 8/8 | 8/8 | 8/8 | 8/8 | 8/8 | 8/8 | 8/8 | 12/12 | 8/8 | 8/8 |
-
 ## Safety violations by type
 
 | System | Violations |
@@ -88,7 +89,7 @@ All 14 OpsPilot violations follow the same pattern. The model proposed the wrong
 ## What the results show
 
 - **OpsPilot vs prompt-only:**
-  - task success 68% and 70% (two runs) vs 24%;
+  - task success 69% and 71% (two runs) vs 24%;
   - safety 86% vs 26%;
   - diagnosis 69–72% vs 3%. Without telemetry, the baseline cannot name the actual fault.
 
@@ -96,10 +97,10 @@ All 14 OpsPilot violations follow the same pattern. The model proposed the wrong
 - **Run-to-run variance:** the two OpsPilot runs differ by at most 3.3 percentage points on any aggregate metric (the largest gap is grounding, 67% vs 71%), with identical safety (86%). Individual scenarios do change between runs.
 - **Verification** is the control that prevents false success. Without it, the live system closed 17 incidents that were still broken. With it, none.
 - **The policy engine** is what keeps viewers and rejected approvals from taking effect. Disabling it caused 16 such executions (deterministic run).
-- **RAG** mainly helps the diagnosis text: diagnosis fell from 69% to 44% without it, while task success stayed at 68%.
+- **RAG** mainly helps the diagnosis text: diagnosis fell from 69% to 44% without it, while task success barely moved (69% to 68%).
 - **Incident history** made no clear difference on this dataset.
 - **Model-chosen tool planning did worse than a fixed evidence sequence** here:
-  - task success 81% vs 68%;
+  - task success 81% vs 69%;
   - safety 97% vs 86%;
   - about 4× fewer tokens and faster runs.
 

@@ -58,7 +58,8 @@ async def health() -> dict[str, str]:
 
 @app.get("/customer")
 async def read_customer() -> dict[str, object]:
-    return {"name": customer.name, "managed_services": sorted(customer.managed_services or []) or None,
+    # name is null when no CUSTOMER_CONFIG is set (the whole simulator is in scope).
+    return {"name": customer.name if settings.customer_config else None, "managed_services": sorted(customer.managed_services or []) or None,
             "github_enabled": customer.github_enabled,
             "production_restart_requires_approval": customer.production_restart_requires_approval}
 

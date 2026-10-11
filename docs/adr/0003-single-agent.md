@@ -27,7 +27,7 @@ Multiple agents would need measured value to justify that complexity, and the Op
 
   No amount of extra model reasoning replaces those checks.
 - **Less model autonomy did better, not more.** A fixed evidence sequence, with the model only diagnosing, beat model-chosen tool calls on the same model:
-  - task success 81% vs 68%;
+  - task success 81% vs 69%;
   - safety 97% vs 86%;
   - about 4× fewer tokens.
 - **The remaining failures are reasoning errors inside one investigation** (misleading evidence: 0/8). These are better addressed by better evidence gathering, such as following upstream errors, than by adding agents to the conversation.
