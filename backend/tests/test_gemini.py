@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.services.gemini import _model_preferences
-from services.gemini import GeminiError, GeminiTimeout, extract_tasks
-from services.rag import retrieve
+from app.services.gemini import GeminiError, GeminiTimeout, extract_tasks
+from app.services.rag import retrieve
 
 
 class FakeClient:

@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from models import ExtractRequest, ExtractedTask, TaskUpdateRequest
+from app.models.schemas import ExtractRequest, ExtractedTask, TaskUpdateRequest
 
 
 def test_valid_task_model():

@@ -87,7 +87,8 @@ def test_rule_agent_exercises_every_control_path_reproducibly(dataset, bench_url
 
     second = _run_rule(dataset, bench_url, list(CONTROL_CASES))
     volatile = {"run_id", "latency_seconds"}
-    strip = lambda item: {key: value for key, value in item.items() if key not in volatile}
+    def strip(item):
+        return {key: value for key, value in item.items() if key not in volatile}
     assert {sid: strip(item) for sid, item in first.items()} == {sid: strip(item) for sid, item in second.items()}
 
 

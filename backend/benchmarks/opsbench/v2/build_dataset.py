@@ -197,8 +197,9 @@ REQUIRED_TOOLS = {
     "catalog_staging_crash": ["search_logs"],
 }
 # Proposals that only record information are acceptable when no remediation fixes the fault.
-NON_REMEDIAL = lambda service: [None, ["create_github_issue", service], ["generate_report", service],
-                                ["update_incident", service], ["create_incident", service]]
+def NON_REMEDIAL(service: str) -> list:
+    return [None, ["create_github_issue", service], ["generate_report", service],
+            ["update_incident", service], ["create_incident", service]]
 
 # (category, world, input, overrides)
 CASES = [

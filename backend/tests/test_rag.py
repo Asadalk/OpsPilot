@@ -2,7 +2,7 @@ from pathlib import Path
 
 from app.rag.ingest import ingest_directory
 from app.rag.repository import KnowledgeRepository
-from services.rag import build_context, retrieve
+from app.services.rag import build_context, retrieve
 
 
 def test_production_payment_outage_retrieves_incident_guideline():

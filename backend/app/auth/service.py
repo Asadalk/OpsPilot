@@ -4,7 +4,7 @@ from typing import Any
 
 import jwt
 
-from app.auth.schemas import Role, UserPrincipal
+from app.auth.schemas import UserPrincipal
 from app.core.config import settings
 
 
