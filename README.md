@@ -45,7 +45,7 @@ See [docs/architecture.md](docs/architecture.md) for the request flow, provider 
 | --- | --- |
 | Simulator | Seeded services, incidents, deployments, logs, and metrics. Each degraded service has a hidden fault, and only the matching action fixes it. |
 | Tools | `get_service_health`, `get_metrics`, `search_logs`, `get_recent_deployments`, `get_incident_history`, `search_runbooks`. All are typed and bounded, and none needs a model. |
-| Retrieval | Markdown knowledge in `knowledge/`, ingested at startup into pgvector. Search is hybrid (semantic plus keyword), with a relevance floor and source citations. |
+| Retrieval | Markdown knowledge in `knowledge/`, ingested at startup into pgvector. Search is hybrid: cosine similarity over hashed bag-of-words vectors (lexical, no embedding model) plus a keyword score, with a relevance floor and source citations. See ADR-0002. |
 | Diagnosis | Competing hypotheses with model-assigned scores (not calibrated probabilities), supporting and contradicting evidence, and cited sources. |
 | Policy | `viewer`, `operator`, and `admin` roles. Risk comes from the server, not the model. Production is stricter: operators need approval for HIGH risk, and CRITICAL is never allowed. |
 | Approval | Pending approvals survive restarts, time out, and reject duplicate or unauthorized decisions. The requester cannot decide their own action. |
@@ -53,6 +53,28 @@ See [docs/architecture.md](docs/architecture.md) for the request flow, provider 
 | Records | Append-only `audit_events` (the incident story) and `agent_events` (the run trace, including per-call token counts). |
 | Reliability | Bounded timeouts. One retry for transient errors only, honoring `retry-after` on 429. Pacing keeps calls under the provider's tokens-per-minute limit. Failed tools or empty data become explicit uncertainty. |
 | UI | Dashboard, incidents, run timeline, approvals, and evaluation. Every number comes from stored records. |
+
+## Quick demo
+
+```bash
+git clone https://github.com/Asadalk/OpsPilot.git && cd OpsPilot
+./scripts/start.sh --demo     # builds, starts, waits until healthy, runs the flagship demo
+```
+
+The first run creates `backend/.env` with `LLM_PROVIDER=mock`: an offline, deterministic agent, so no API key is needed. Add a `GROQ_API_KEY` and set `LLM_PROVIDER=groq` to use a real model.
+
+The demo drives the same HTTP API as the UI:
+1. "Checkout failures increased after deployment": the agent inspects metrics, logs, and deployments, then proposes a rollback.
+2. Policy marks the rollback HIGH risk and requires approval. The operator cannot approve their own request; an admin approves.
+3. The rollback runs, verification succeeds, and the incident is resolved.
+4. The demo prints the audit story and the run timeline.
+5. Failure demo: a viewer asks for a restart, and policy denies it.
+
+To see eight deterministic failure cases (LLM timeout, tool failure, database failure, bad retrieval, malicious document, action failure, verification failure, permission denial):
+
+```bash
+docker compose exec backend python -m app.demo.failures all
+```
 
 ## Setup (Docker Compose)
 
@@ -99,6 +121,7 @@ The agents you can run are `rule` (deterministic reference), `opspilot` (LLM), a
 ## Project documents
 
 - [docs/architecture.md](docs/architecture.md): the current architecture, request flow, simulator faults, and reliability rules.
+- [docs/adr/](docs/adr/): architecture decision records (why PostgreSQL, pgvector, one agent, server-side policy, human approval, a simulator, synchronous runs).
 
 ## Limitations
 

@@ -7,7 +7,7 @@ Next.js UI ──HTTP + JWT──> FastAPI
                              ├── Ops Agent (manual loop, one model call per step)
                              │     ├── READ tools ──────────> simulator tables
                              │     ├── hybrid retrieval ────> knowledge_chunks (pgvector)
-                             │     └── LLM provider (Groq by default, Gemini optional)
+                             │     └── LLM provider (Groq by default; Gemini; offline mock)
                              ├── Policy engine (role × risk × environment)
                              ├── Approval service ──> simulator actions ──> verification
                              └── Audit + agent event writers
@@ -28,7 +28,7 @@ Next.js UI ──HTTP + JWT──> FastAPI
 
 ## Model provider
 
-`LLM_PROVIDER` selects Groq (default) or Gemini for both the agent and the legacy task extraction.
+`LLM_PROVIDER` selects Groq (default), Gemini, or `mock`. The mock is offline and deterministic, and has failure modes for tests and the keyless demo. Groq and Gemini also power the legacy task extraction. The agent depends only on the `DecisionProvider` interface: `build_decision_provider()` is the single place that picks a concrete provider.
 
 - **Groq** is called over plain HTTP with `httpx`, using Groq's OpenAI-compatible endpoint. No SDK is involved.
 - The decision schema is non-strict JSON Schema with two allowed shapes. A tool call must name one of the advertised READ tools and include arguments. A diagnosis must include text. Groq validates the output against this schema, and Pydantic validates it again.
@@ -49,6 +49,16 @@ The services, incidents, deployments, logs, and metrics tables are seeded by mig
 | notification-api | external_dependency | nothing; escalate |
 
 A mismatched action runs but leaves the symptoms in place, so verification fails, retries once, and escalates.
+
+## Customer configuration
+
+`CUSTOMER_CONFIG` points to a TOML file (`backend/config/customers/`). It:
+- names the customer;
+- limits the services in scope (tools refuse other services, and policy denies actions on them);
+- switches the GitHub integration on or off;
+- can require approval for every production restart.
+
+It reaches only the tools and the policy engine, and can only make a decision stricter. The agent loop is unchanged.
 
 ## Authorization and approval
 
@@ -72,9 +82,9 @@ The person who requested an approval cannot decide it. The API returns 403, and 
 - Only transient failures are retried, once each. These are timeouts, connection errors, deadlocks, serialization conflicts, and HTTP 408, 429, or 5xx.
 - A failed tool, empty data, or empty retrieval is recorded as uncertainty and is never treated as evidence of health.
 
-## Startup and tests
+## Startup, tests, and CI
 
-- On startup the backend applies SQL migrations in order. If `KNOWLEDGE_DIR` is set, it then ingests that directory. Compose mounts `./knowledge` read-only at `/knowledge`. A missing directory stops startup.
+- On startup the backend first refuses default credentials when `ENVIRONMENT` is not `development`, then applies SQL migrations in order. If `KNOWLEDGE_DIR` is set, it then ingests that directory. Compose mounts `./knowledge` read-only at `/knowledge`. A missing directory stops startup.
 - Tests run against a separate `opspilot_test` database on the same server, which is created if missing. The suite refuses any database name that does not end in `_test`, and it blanks LLM keys so tests never call a hosted model.
 
 ## Frontend
@@ -83,3 +93,13 @@ The Next.js pages are the dashboard, incidents, agent runs (event timeline), app
 
 - Every figure is read from the API. Values the saved evaluation does not measure are labeled as unmeasured.
 - The dashboard success rate is a ratio of terminal run statuses. It is not the OpsBench task-success metric.
+- CI (`.github/workflows/ci.yml`) runs, on every push:
+  - ruff;
+  - the security suite and the full test suite against a pgvector service;
+  - an OpsBench smoke run (deterministic rule agent, one scenario per category, which must be 100% safe);
+  - the frontend type check and build;
+  - both Docker image builds.
+
+## More detail
+
+[agent-workflow.md](agent-workflow.md), [tools.md](tools.md), [retrieval.md](retrieval.md), [database.md](database.md), [security.md](security.md) and [threat-model.md](threat-model.md), [evaluation.md](evaluation.md), [deployment.md](deployment.md), [troubleshooting.md](troubleshooting.md), and the decision records in [adr/](adr/).
