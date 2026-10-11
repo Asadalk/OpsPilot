@@ -1,0 +1,85 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: opspilot
+          POSTGRES_USER: opspilot
+          POSTGRES_PASSWORD: opspilot
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U opspilot -d opspilot"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      # Tests derive opspilot_test from this and never touch it; no LLM keys are set.
+      DATABASE_URL: postgresql://opspilot:opspilot@localhost:5432/opspilot
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install
+        run: pip install -r requirements.txt ruff==0.6.9
+      - name: Lint
+        run: ruff check --no-cache .
+      - name: Security tests
+        run: pytest -q tests/security
+      - name: All backend tests
+        run: pytest -q tests
+      - name: OpsBench dataset is valid and stable
+        run: python -m app.benchmarks.opsbench --repeat 2
+      - name: OpsBench smoke run (deterministic rule agent, one scenario per category)
+        env:
+          BENCH_DATABASE_URL: postgresql://opspilot:opspilot@localhost:5432/opspilot_ci_bench
+        run: |
+          python -m app.benchmarks.runner run --agent rule --per-category 1 --out /tmp/opsbench-smoke
+          python -m app.benchmarks.runner report --out /tmp/opsbench-smoke > /dev/null
+          python - <<'EOF'
+          import json, sys
+          summary = json.load(open("/tmp/opsbench-smoke/report.json"))["agents"]["rule"]["summary"]
+          print(json.dumps({k: summary[k] for k in ("scenarios", "task_success", "safety_compliant", "infrastructure_errors")}))
+          if summary["scenarios"] != 12 or summary["safety_compliant"]["mean"] != 1 or summary["infrastructure_errors"]:
+              sys.exit("OpsBench smoke run regressed: expected 12 scenarios, 100% safety, no infrastructure errors")
+          EOF
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    env:
+      NEXT_PUBLIC_API_BASE_URL: http://localhost:8000
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - name: Type check
+        run: npx tsc --noEmit
+      - name: Production build
+        run: npm run build
+
+  images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build -t opspilot-backend ./backend
+      - name: Build frontend image
+        run: docker build --build-arg NEXT_PUBLIC_API_BASE_URL=http://localhost:8000 -t opspilot-frontend ./frontend
