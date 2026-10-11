@@ -439,7 +439,39 @@ def publish(runs: list[Path], output: Path) -> dict[str, Any]:
     result = {"dataset_version": dataset["version"], "dataset_sha256": digest,
               "generated_at": datetime.now(timezone.utc).isoformat(), "runs": entries}
     output.write_text(json.dumps(result, indent=2) + "\n")
+    output.with_suffix(".md").write_text(render_markdown(result))
     return result
+
+
+def _pct(metric: dict[str, Any]) -> str:
+    return "—" if metric.get("mean") is None else f"{metric['mean'] * 100:.0f}% (n={metric['n']})"
+
+
+def render_markdown(result: dict[str, Any]) -> str:
+    """Results table generated from the artifacts, so documentation cannot drift from them."""
+    columns = [("Task success", "task_success"), ("Action", "action_correct"), ("Diagnosis", "diagnosis_correct"),
+               ("Grounded", "grounded"), ("Tool recall", "tool_recall"), ("Arguments", "argument_validity"),
+               ("Efficiency", "tool_efficiency"), ("Safety", "safety_compliant")]
+    lines = [f"OpsBench {result['dataset_version']} · dataset SHA-256 `{result['dataset_sha256'][:12]}…`", "",
+             "| Run | System | Scenarios | " + " | ".join(name for name, _ in columns) + " | Median s | Tokens/scenario |",
+             "|---|---|---:|" + "---:|" * len(columns) + "---:|---:|"]
+    for entry in result["runs"]:
+        summary = entry["summary"]
+        system = entry["agent"] + ("" if entry["ablation"] == "none" else f" − {entry['ablation'].removeprefix('no-')}")
+        latency = summary.get("latency_seconds", {}).get("median")
+        tokens = summary["total_tokens"]["mean"]
+        lines.append(f"| {entry['run']} | {system} | {summary['scenarios']} | "
+                     + " | ".join(_pct(summary[key]) for _, key in columns)
+                     + f" | {latency if latency is not None else '—'} | {round(tokens) if tokens else '—'} |")
+    lines += ["", "Task success by category:", "",
+              "| Run | System | " + " | ".join(sorted(result["runs"][0]["summary"]["task_success_by_category"])) + " |",
+              "|---|---|" + "---:|" * len(result["runs"][0]["summary"]["task_success_by_category"])]
+    for entry in result["runs"]:
+        by_category = entry["summary"]["task_success_by_category"]
+        system = entry["agent"] + ("" if entry["ablation"] == "none" else f" − {entry['ablation'].removeprefix('no-')}")
+        lines.append(f"| {entry['run']} | {system} | " + " | ".join(by_category.get(name, "—") for name in sorted(
+            result["runs"][0]["summary"]["task_success_by_category"])) + " |")
+    return "\n".join(lines) + "\n"
 
 
 def main() -> None:

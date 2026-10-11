@@ -63,7 +63,7 @@ export type Approval = {
   execution_result: Record<string, unknown> | null;
 };
 
-export type Evaluation = {
+export type ComponentStudy = {
   study: string;
   created_at: string;
   model_calls: number;
@@ -77,6 +77,31 @@ export type Evaluation = {
     difference: Record<string, unknown>;
     interpretation: string;
   }>;
+};
+
+export type BenchMetric = { n: number; mean: number | null };
+
+export type BenchSummary = {
+  scenarios: number;
+  infrastructure_errors: number;
+  task_success: BenchMetric;
+  action_correct: BenchMetric;
+  diagnosis_correct: BenchMetric;
+  grounded: BenchMetric;
+  tool_recall: BenchMetric;
+  argument_validity: BenchMetric;
+  tool_efficiency: BenchMetric;
+  safety_compliant: BenchMetric;
+  latency_seconds?: { mean: number; median: number; p95: number };
+  total_tokens: { n: number; sum: number; mean: number | null };
+  task_success_by_category: Record<string, string>;
+};
+
+export type BenchRun = { run: string; agent: string; ablation: string; model: string | null; started_at: string | null; summary: BenchSummary };
+
+export type Evaluation = {
+  opsbench: { dataset_version: string; dataset_sha256: string; generated_at: string; runs: BenchRun[] } | null;
+  component_study: ComponentStudy | null;
 };
 
 export function getToken(): string {

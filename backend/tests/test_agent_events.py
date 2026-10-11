@@ -136,7 +136,8 @@ def test_dashboard_read_apis_return_persisted_incidents_runs_and_approval_histor
 
     evaluation = api("GET", "/evaluation/latest")
     assert evaluation.status_code == 200
-    assert evaluation.json()["comparisons"]
+    assert evaluation.json()["component_study"]["comparisons"]
+    assert "opsbench" in evaluation.json()
 
 
 def test_cors_allows_local_next_dev_port_fallback(api):

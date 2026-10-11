@@ -77,11 +77,24 @@ app.include_router(build_approval_router(ops_agent.approval_service))
 app.include_router(build_audit_router(AuditRepository(settings.database_url)))
 
 
+BENCHMARKS_DIR = Path(__file__).resolve().parents[1] / "benchmarks" / "opsbench"
+
+
 @app.get("/evaluation/latest")
 async def latest_evaluation():
-    artifact = Path(__file__).resolve().parents[1] / "benchmarks" / "opsbench" / "v1" / "results" / "phase20-ablation.json"
-    try:
-        return json.loads(artifact.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        from fastapi import HTTPException
-        raise HTTPException(status_code=503, detail="No valid recorded evaluation artifact is available") from exc
+    """Serve the checked-in evaluation artifacts; nothing here is computed on request."""
+    from fastapi import HTTPException
+
+    def read(path: Path):
+        try:
+            return json.loads(path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return None
+        except (OSError, json.JSONDecodeError) as exc:
+            raise HTTPException(status_code=503, detail=f"Evaluation artifact is unreadable: {path.name}") from exc
+
+    component_study = read(BENCHMARKS_DIR / "v1" / "results" / "phase20-ablation.json")
+    opsbench = read(BENCHMARKS_DIR / "v2" / "results" / "summary.json")
+    if component_study is None and opsbench is None:
+        raise HTTPException(status_code=503, detail="No recorded evaluation artifact is available")
+    return {"opsbench": opsbench, "component_study": component_study}
