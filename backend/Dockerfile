@@ -11,6 +11,10 @@ RUN pip install --upgrade pip \
 
 COPY . .
 
+# Run as an unprivileged user; the app only reads its code and the mounted knowledge.
+RUN useradd --create-home --uid 10001 opspilot
+USER opspilot
+
 EXPOSE 8000
 
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
